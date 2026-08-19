@@ -1,0 +1,37 @@
+#!/bin/bash
+# collect <nonce_hex> — stream the attestation evidence bundle as one
+# uncompressed tar to stdout.  Invoked by the host verifier over ssh.
+# Contract: pkg-integrity/SPEC.md §5.
+set -u
+export LC_ALL=C
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export TPM2TOOLS_TCTI=device:/dev/tpmrm0
+
+RUN=/run/pkg-integrity
+NONCE="${1:-}"
+
+case "$NONCE" in
+    *[!0-9a-f]* | "")
+        echo "collect: nonce must be 1-64 lowercase hex chars" >&2; exit 2 ;;
+esac
+[ ${#NONCE} -le 64 ] || { echo "collect: nonce too long" >&2; exit 2; }
+[ -e "$RUN/done" ] || { echo "collect: measurement not finished" >&2; exit 3; }
+
+cd "$RUN"
+
+if [ -e ak.ctx ]; then
+    tpm2_quote -c ak.ctx -l sha256:14 -q "$NONCE" \
+        -m quote.msg -s quote.sig -o pcrs.bin -g sha256 -f plain \
+        >/dev/null 2>>agent.log || { echo "collect: quote failed" >&2; exit 4; }
+fi
+
+VERSION_ID=$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-unknown}")
+printf '{"machine":"%s","version":"%s","timestamp":"%s","nonce":"%s","status":"%s"}\n' \
+    "$(hostname)" "$VERSION_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NONCE" \
+    "$(cat status 2>/dev/null || echo unknown)" > meta.json
+
+FILES="measurement-list root.hex meta.json"
+for f in pcr14.hex ak.pub.pem quote.msg quote.sig pcrs.bin; do
+    [ -e "$f" ] && FILES="$FILES $f"
+done
+exec tar -cf - $FILES

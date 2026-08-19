@@ -1,0 +1,12 @@
+[Unit]
+Description=Package-aware integrity measurement (merkle root -> TPM PCR14)
+After=local-fs.target systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=300
+ExecStart=/usr/libexec/pkg-integrity/pkg-measure.sh
+
+[Install]
+WantedBy=multi-user.target

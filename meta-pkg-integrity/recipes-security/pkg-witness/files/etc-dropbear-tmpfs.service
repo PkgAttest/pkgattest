@@ -1,0 +1,14 @@
+[Unit]
+Description=Writable /etc/dropbear for host keys (read-only rootfs)
+DefaultDependencies=no
+After=local-fs.target
+Before=dropbearkey.service dropbear.socket sockets.target
+ConditionPathIsReadWrite=!/etc/dropbear
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/mount -t tmpfs -o mode=0700 tmpfs /etc/dropbear
+
+[Install]
+WantedBy=sysinit.target
