@@ -8,3 +8,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 pkgattest.egg-info/
+site-dist/
+.site-a/
+.site-b/

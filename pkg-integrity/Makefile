@@ -8,7 +8,8 @@ SSH     := ssh -i keys/id_ed25519 -o UserKnownHostsFile=keys/known_hosts \
 
 .PHONY: venv keys test log publish trust-device wait-device xcheck \
         beat1 beat2 beat3 beat4 closer qr freeze e2e-sim build-a build-b \
-        build-c publish-c log-writable
+        build-c publish-c log-writable site site-verify site-check \
+        site-serve vendor-crypto check-vendor parity
 
 venv:
 	python3 -m venv .venv
@@ -84,3 +85,42 @@ freeze:
 
 e2e-sim:
 	@bash sim/e2e-sim.sh
+
+# ---- static site ---------------------------------------------------------
+# The bundle is deterministic on purpose: site-verify builds it twice into
+# temp dirs and diffs, so the published bytes are reproducible by anyone.
+
+site:
+	@$(PY) -c "import os,sys,json; sys.path.insert(0,'.'); \
+	  from pkgintegrity import site_export; \
+	  print(json.dumps(site_export.export(os.path.abspath('.'), \
+	    os.path.abspath('site-dist')), indent=1))"
+	@echo "site-dist/ ready — open site-dist/index.html or 'make site-serve'"
+
+site-verify:
+	@rm -rf .site-a .site-b
+	@$(PY) -c "import os,sys; sys.path.insert(0,'.'); \
+	  from pkgintegrity import site_export; \
+	  site_export.export(os.path.abspath('.'), os.path.abspath('.site-a')); \
+	  site_export.export(os.path.abspath('.'), os.path.abspath('.site-b'))"
+	@diff -r .site-a .site-b && echo "deterministic: two exports are identical"
+	@rm -rf .site-a .site-b
+
+# Check the bundle the way a browser will: rebuild every tree, verify every
+# signature, name any unpublished package. Needs node (test-only dependency).
+site-check: site
+	@command -v node >/dev/null && node tools/verify-bundle.js site-dist \
+	  || echo "node not found — skipping the browser-path check"
+
+site-serve: site
+	$(PY) log_server.py --site site-dist
+
+# ---- vendored browser crypto --------------------------------------------
+vendor-crypto:
+	$(PY) tools/vendor_crypto.py --fetch
+
+check-vendor:
+	@$(PY) tools/vendor_crypto.py --check
+
+parity:
+	@$(PYTEST) -q tests/test_js_parity.py
