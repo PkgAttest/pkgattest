@@ -430,7 +430,7 @@ def main():
           "listening on %s:%d"
           % (LOG.tree.size, LOG.tree.root().hex()[:16], LOG.sth["timestamp"],
              LOG.key_id[:14], "writable" if args.writable else "read-only",
-             args.bind, args.port))
+             args.bind, args.port), flush=True)
     ThreadingHTTPServer((args.bind, args.port), Handler).serve_forever()
     return 0
 

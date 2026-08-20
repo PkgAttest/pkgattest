@@ -32,7 +32,8 @@ make build-a               # image A (~1h first time, then minutes)
 make build-b               # image B (dropbear pinned back, ~20-35 min)
 make build-c               # image C (later build; second signed tree head)
 # flash artifacts/A wic.xz to SD card A, artifacts/B to card B (bmaptool/dd)
-make log                   # terminal 1: transparency log
+make log                   # terminal 1: transparency log (read-only)
+make log-writable          # only when publishing; writes are off by default
 make publish               # publish image A (image B never gets published)
 make wait-device HOST=raspberrypi3-64.local
 make xcheck                # three-way root agreement (build/device/fetched)

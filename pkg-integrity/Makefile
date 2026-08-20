@@ -8,7 +8,7 @@ SSH     := ssh -i keys/id_ed25519 -o UserKnownHostsFile=keys/known_hosts \
 
 .PHONY: venv keys test log publish trust-device wait-device xcheck \
         beat1 beat2 beat3 beat4 closer qr freeze e2e-sim build-a build-b \
-        build-c publish-c
+        build-c publish-c log-writable
 
 venv:
 	python3 -m venv .venv
@@ -32,8 +32,11 @@ keys:
 test:
 	$(PYTEST) -q tests
 
-# Writes are off by default; publishing needs --writable.
+# Read-only: this is what runs during the demo. Publishing needs log-writable.
 log:
+	$(PY) log_server.py
+
+log-writable:
 	$(PY) log_server.py --writable
 
 publish:
