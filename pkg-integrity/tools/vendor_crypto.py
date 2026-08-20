@@ -146,6 +146,19 @@ def _convert(src: str, module_id: str):
         raise SystemExit("%s: expected exactly one export statement, found %d"
                          % (module_id, len(matches)))
     match = matches[0]
+    # EXPORT_RE is compiled with re.M, so `$` matches at any line end, not
+    # just end-of-file. Keeping src[:match.start()] would then silently drop
+    # anything after the export — which on a future upstream build could mean
+    # discarding real code from a crypto bundle and pinning the mangled
+    # result forever. Silently mangling is exactly what this converter exists
+    # to refuse.
+    trailing = src[match.end():].strip()
+    if trailing:
+        raise SystemExit(
+            "%s: %d bytes of content follow the export statement (%r...) — "
+            "this converter only handles a single TRAILING export"
+            % (module_id, len(trailing), trailing[:60]))
+
     body = src[:match.start()].rstrip()
 
     # The bundles are minified and use single-letter identifiers, so the

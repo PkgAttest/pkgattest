@@ -67,7 +67,7 @@ def _js(path, key, value):
 def _read_jsonl(path):
     if not os.path.exists(path):
         return []
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
@@ -84,6 +84,11 @@ def _key_id(pub_pem_path):
 
 LABEL_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
 
+# Never copy these into the bundle: they would appear in sha256sums.txt and
+# make byte-reproducibility depend on the state of someone's working tree.
+_IGNORED = shutil.ignore_patterns(
+    "__pycache__", "*.py[co]", ".*.sw?", "*~", ".DS_Store", "*.orig", "*.rej")
+
 
 def _read_sha256sums(path):
     """Parse SHA256SUMS, keeping only basenames.
@@ -95,7 +100,7 @@ def _read_sha256sums(path):
     out = {}
     if not os.path.exists(path):
         return out
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             digest, sep, name = line.strip().partition("  ")
             if sep and len(digest) == 64:
@@ -136,6 +141,9 @@ def collect_builds(artifacts_dir):
             raise ExportError("%s: expected exactly one measurement document, "
                               "found %d: %s" % (label, len(docs), docs))
         doc = canonical.load_measurements_json(os.path.join(d, docs[0]))
+        if not doc["packages"]:
+            raise ExportError("%s: measurement document contains "
+                              "no packages" % label)
 
         problems = canonical.verify_measurements_doc(doc)
         if problems:
@@ -176,13 +184,23 @@ def collect_builds(artifacts_dir):
         receipt_path = os.path.join(d, "publication-receipt.json")
         receipt = None
         if os.path.exists(receipt_path):
-            with open(receipt_path) as f:
+            with open(receipt_path, encoding="utf-8") as f:
                 receipt = json.load(f)
             if receipt.get("merkle_root") != doc["merkle_root"]:
                 raise ExportError(
                     "%s: publication receipt claims merkle_root %s but the "
                     "measurement document says %s"
                     % (label, receipt.get("merkle_root"), doc["merkle_root"]))
+            if receipt.get("package_count") not in (None, len(doc["packages"])):
+                raise ExportError(
+                    "%s: publication receipt claims %s packages, the "
+                    "measurement document has %d"
+                    % (label, receipt.get("package_count"),
+                       len(doc["packages"])))
+            if receipt.get("image_line") not in (None, doc["image_line"]):
+                raise ExportError(
+                    "%s: publication receipt image_line %r != %r"
+                    % (label, receipt.get("image_line"), doc["image_line"]))
 
         builds.append({
             "label": label,
@@ -270,6 +288,27 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
 
     # --- builds -----------------------------------------------------------
     builds = collect_builds(artifacts_dir)
+    heads_by_size = {h["tree_size"]: h for h in history}
+    for b in builds:
+        # A receipt carries a full signed tree head. Shipping it unchecked
+        # would put a tree_size, root and signature on the page beside numbers
+        # that genuinely were recomputed, with nothing to tell them apart —
+        # so it has to match a head we already verified, or not ship at all.
+        receipt = b.get("receipt")
+        if receipt and isinstance(receipt.get("sth"), dict):
+            claimed = receipt["sth"]
+            head = heads_by_size.get(claimed.get("tree_size"))
+            if head is None:
+                raise ExportError(
+                    "%s: publication receipt cites tree size %s, which is not "
+                    "in the log's signed history"
+                    % (b["label"], claimed.get("tree_size")))
+            for field in ("root_hash", "timestamp", "signature"):
+                if claimed.get(field) != head[field]:
+                    raise ExportError(
+                        "%s: publication receipt's %s disagrees with the "
+                        "signed head at size %d"
+                        % (b["label"], field, head["tree_size"]))
     for b in builds:
         doc = b["_doc"]
         indices, missing = [], 0
@@ -304,14 +343,19 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
     os.makedirs(data_dir)
     os.makedirs(os.path.join(data_dir, "builds"))
 
-    # Static assets, whatever exists so far.
+    # Static assets, whatever exists so far. Editor backups and bytecode
+    # caches must not become part of a bundle whose reproducibility other
+    # people are invited to check — otherwise "reproduce the published bytes"
+    # silently means "have the same junk in your working tree".
     site_src = os.path.join(base, "site")
     if os.path.isdir(site_src):
         for name in sorted(os.listdir(site_src)):
+            if _IGNORED(site_src, [name]):
+                continue
             src = os.path.join(site_src, name)
             dst = os.path.join(out_dir, name)
             if os.path.isdir(src):
-                shutil.copytree(src, dst)
+                shutil.copytree(src, dst, ignore=_IGNORED)
             else:
                 shutil.copy2(src, dst)
 

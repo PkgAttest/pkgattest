@@ -326,6 +326,61 @@ def test_export_refuses_packages_that_are_not_name_sorted(tmp_path):
         _export(base, tmp_path / "dist")
 
 
+def test_export_refuses_a_receipt_citing_an_unsigned_head(tmp_path):
+    """A receipt carries a full signed tree head. Shipping it unchecked would
+    put a tree_size, root and signature on the page beside numbers that were
+    genuinely recomputed, with nothing to tell them apart."""
+    base, doc = _fixture_tree(tmp_path)
+    (base / "artifacts" / "A" / "publication-receipt.json").write_text(
+        json.dumps({"merkle_root": doc["merkle_root"],
+                    "sth": {"tree_size": 999999, "root_hash": "ff" * 32,
+                            "timestamp": 1, "signature": "ee" * 64}}))
+    with pytest.raises(site_export.ExportError, match="signed history"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_refuses_a_receipt_that_rewrites_a_real_head(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    hist = [json.loads(l) for l
+            in (base / "log" / "sth-history.jsonl").read_text().splitlines()
+            if l.strip()]
+    real = hist[-1]
+    (base / "artifacts" / "A" / "publication-receipt.json").write_text(
+        json.dumps({"merkle_root": doc["merkle_root"],
+                    "sth": dict(real, signature="ee" * 64)}))
+    with pytest.raises(site_export.ExportError, match="disagrees with the"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_refuses_an_empty_measurement_document(tmp_path):
+    """Must name the build at fault, not surface a bare ValueError from deep
+    inside merkle.device_root."""
+    base, doc = _fixture_tree(tmp_path)
+    (base / "artifacts" / "A" / "test.pkg-measurements.json").write_text(
+        json.dumps(dict(doc, packages=[])))
+    with pytest.raises(site_export.ExportError, match="no packages"):
+        _export(base, tmp_path / "dist")
+
+
+def test_working_tree_junk_stays_out_of_the_bundle(tmp_path):
+    """sha256sums.txt is what "reproduce the published bytes" rests on, so it
+    must not depend on whether someone left an editor backup lying around."""
+    base, _ = _fixture_tree(tmp_path)
+    site = base / "site"
+    (site / ".verify.js.swp").write_text("junk")
+    (site / "notes~").write_text("junk")
+    (site / "__pycache__").mkdir(exist_ok=True)
+    (site / "__pycache__" / "x.pyc").write_text("junk")
+
+    out = tmp_path / "dist"
+    _export(base, out)
+    listed = [line.split()[1] for line in
+              (out / "sha256sums.txt").read_text().splitlines()]
+    for junk in (".verify.js.swp", "notes~", "__pycache__/x.pyc"):
+        assert junk not in listed, "%s reached the bundle" % junk
+    assert not (out / "__pycache__").exists()
+
+
 def test_export_refuses_without_a_signed_head(tmp_path):
     base, _ = _fixture_tree(tmp_path)
     (base / "log" / "sth-history.jsonl").unlink()
@@ -440,6 +495,36 @@ def test_unpinned_key_is_declared_not_hidden(tmp_path):
                            capture_output=True, text=True, timeout=300)
     assert wrong.returncode == 1
     assert "BUNDLE INVALID" in wrong.stdout
+
+
+@pytest.mark.skipif(NODE is None, reason="node not present")
+@pytest.mark.parametrize("field,value,expect", [
+    ("tree_size", -1, "non-negative integer"),
+    ("tree_size", "5", "non-negative integer"),
+    ("root_hash", "zz" * 32, "64 lowercase hex"),
+    ("log_pubkey_hex", "aa" * 31, "64 lowercase hex"),
+    ("signature", "ab", "128 lowercase hex"),
+])
+def test_malformed_snapshot_reports_instead_of_crashing(
+        tmp_path, field, value, expect):
+    """A bundle under suspicion is exactly the one carrying a negative
+    tree_size or a truncated key. Those must come out as BUNDLE INVALID, not
+    as a stack trace on top of a half-printed, green-looking transcript —
+    and a browser would hit the same paths and die mid-render."""
+    base, _ = _fixture_tree(tmp_path)
+    out = tmp_path / "dist"
+    _export(base, out)
+    _patch_data(out / "data" / "snapshot.js", "snapshot",
+                lambda snap: dict(snap, **{field: value}))
+
+    proc = subprocess.run(
+        [NODE, os.path.join(BASE, "tools", "verify-bundle.js"), str(out)],
+        capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert "BUNDLE INVALID" in proc.stdout
+    assert expect in proc.stdout
+    assert "Maximum call stack" not in proc.stderr
+    assert proc.stderr.strip() == "", "crashed instead of reporting"
 
 
 @pytest.mark.skipif(NODE is None, reason="node not present")

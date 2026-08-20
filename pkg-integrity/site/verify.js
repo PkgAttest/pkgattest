@@ -110,10 +110,27 @@ var PKGI_VERIFY = (function (crypto) {
   /* Merkle Tree Hash over leafHashes[0:size]. The recursion splits at the
    * largest power of two below n, so its depth is logarithmic (about 12 at
    * n=2131, about 20 at a million) -- no stack risk at any realistic size. */
+  /* A tree size must be a non-negative integer. Without this guard, subtree()
+   * computes n = hi - lo <= 0, largestPowerOfTwoLt returns 1, and the
+   * interval never shrinks: '0', null, -1 and 2.5 all recurse until the stack
+   * dies. Python raises IndexError on the same inputs. A verifier is handed
+   * these values straight out of a snapshot it does not yet trust, so it has
+   * to reject them before using them, not while using them.
+   *
+   * `size == null` (loose) defaults to the whole tree, matching Python's
+   * `size=None`. */
+  function checkedSize(size, available) {
+    if (size == null) size = available;
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new Error('bad tree size: ' + JSON.stringify(size));
+    }
+    if (size > available) throw new Error('size beyond tree');
+    return size;
+  }
+
   function mth(leafHashes, size) {
-    if (size === undefined) size = leafHashes.length;
+    size = checkedSize(size, leafHashes.length);
     if (size === 0) return EMPTY_TREE_ROOT;
-    if (size > leafHashes.length) throw new Error('size beyond tree');
     return subtree(leafHashes, 0, size);
   }
 
@@ -129,8 +146,8 @@ var PKGI_VERIFY = (function (crypto) {
   /* Audit path for leaf `index` in the size-`size` tree. Derived locally from
    * the leaf set the reader holds -- never fetched from a server. */
   function inclusionProof(leafHashes, index, size) {
-    if (size === undefined) size = leafHashes.length;
-    if (!(index >= 0 && index < size && size <= leafHashes.length)) {
+    size = checkedSize(size, leafHashes.length);
+    if (!Number.isSafeInteger(index) || !(index >= 0 && index < size)) {
       throw new Error('bad index/size');
     }
     function path(m, lo, hi) {
@@ -214,8 +231,9 @@ var PKGI_VERIFY = (function (crypto) {
   }
 
   function consistencyProof(leafHashes, oldSize, newSize) {
-    if (newSize === undefined) newSize = leafHashes.length;
-    if (!(oldSize > 0 && oldSize <= newSize && newSize <= leafHashes.length)) {
+    newSize = checkedSize(newSize, leafHashes.length);
+    if (!Number.isSafeInteger(oldSize) ||
+        !(oldSize > 0 && oldSize <= newSize)) {
       throw new Error('bad sizes');
     }
     if (oldSize === newSize) return [];

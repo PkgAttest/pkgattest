@@ -309,6 +309,42 @@ def test_sort_order_matches_python_and_the_naive_sort_would_not(tmp_path):
 
 
 @requires_node
+def test_bad_tree_sizes_raise_rather_than_exhaust_the_stack(tmp_path):
+    """A verifier is handed a tree size straight out of a snapshot it does not
+    yet trust. Without a guard, subtree() recurses on an interval that never
+    shrinks: '0', null, -1 and 2.5 all die with RangeError instead of a clear
+    error. Python raises IndexError on the same inputs."""
+    script = (
+        "const V=require(%s);"
+        "const L=[...Array(6)].map((_,i)=>V.sha256(V.utf8('x'+i)));"
+        "const cases={'string-zero':'0','null':null,'negative':-1,"
+        "'fraction':2.5,'beyond-tree':7,'huge':1e20,'unsafe':2**53+2};"
+        "const out={};"
+        "for (const k of Object.keys(cases)) {"
+        "  try { V.mth(L, cases[k]); out[k]='ok'; }"
+        "  catch(e){ out[k]=e.constructor.name; } }"
+        "try { V.inclusionProof(L, 0, -1); out['proof']='ok'; }"
+        "catch(e){ out['proof']=e.constructor.name; }"
+        "try { V.inclusionProof(L, 2.5, 6); out['proof-index']='ok'; }"
+        "catch(e){ out['proof-index']=e.constructor.name; }"
+        "try { V.consistencyProof(L, 1, -1); out['consistency']='ok'; }"
+        "catch(e){ out['consistency']=e.constructor.name; }"
+        "console.log(JSON.stringify(out));" % json.dumps(VERIFY_JS))
+    proc = subprocess.run([NODE, "-e", script], capture_output=True,
+                          text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+
+    # null means "the whole tree", matching Python's size=None.
+    assert out["null"] == "ok", out
+    for bad in ("string-zero", "negative", "fraction", "beyond-tree", "huge",
+                "unsafe", "proof", "proof-index", "consistency"):
+        assert out[bad] == "Error", (
+            "%s gave %s, expected a clean Error (RangeError means the stack "
+            "was exhausted)" % (bad, out[bad]))
+
+
+@requires_node
 def test_selftest_catches_a_broken_primitive(tmp_path):
     """A self-test that cannot fail is decoration.
 
@@ -408,3 +444,21 @@ def test_vendored_crypto_is_reproducible():
          "--check"], capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "check-vendor: OK" in proc.stdout
+
+
+def test_vendor_converter_refuses_content_after_the_export():
+    """EXPORT_RE uses re.M, so `$` matches at any line end. Without an
+    explicit check, everything after the first export statement would be
+    silently dropped — which on a future upstream build could mean discarding
+    real code from a crypto bundle and pinning the mangled result forever."""
+    sys.path.insert(0, os.path.join(BASE, "tools"))
+    import vendor_crypto
+
+    ok, stripped = vendor_crypto._convert(
+        "var a=1;\nexport{a as sha256};\n", "test/ok")
+    assert "a=1" in ok and stripped == []
+
+    with pytest.raises(SystemExit, match="follow the export"):
+        vendor_crypto._convert(
+            "var a=1;\nexport{a as sha256};\nglobalThis.__patch=1;\n",
+            "test/trailing")

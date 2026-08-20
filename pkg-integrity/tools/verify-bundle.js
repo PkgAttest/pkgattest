@@ -66,113 +66,161 @@ const note = s => console.log('  ' + s);
 
 for (const p of V.selfTest()) problems.push('selfTest: ' + p);
 
-const snap = D.snapshot;
+const snap = D.snapshot || {};
 console.log(`snapshot ${snap.snapshot_id}`);
 
-// --- 0. The leaf set must be exactly the signed head, no more ------------
-// Leaves beyond tree_size are covered by no signature. Without this check,
-// appending one unsigned line to leaves.js is enough to make an unpublished
-// package look published -- no key required.
-if (D.leaves.length !== snap.tree_size) {
-  problems.push(`leaves.js holds ${D.leaves.length} records but the signed ` +
-                `head covers ${snap.tree_size} -- the extra records are ` +
-                `signed by nothing`);
-} else if (snap.package_records !== snap.tree_size) {
-  problems.push(`snapshot.package_records (${snap.package_records}) != ` +
-                `tree_size (${snap.tree_size})`);
-} else {
-  note(`${D.leaves.length} records, exactly matching the signed head`);
+/* Validate the snapshot's SHAPE before any of it is used as a number or a
+ * hex string. Everything below consumes these values, and a bundle under
+ * suspicion is exactly the kind that carries a negative tree_size or a
+ * truncated key -- which must come out as BUNDLE INVALID, never as a stack
+ * trace on top of a half-printed, green-looking transcript. */
+const HEX64 = /^[0-9a-f]{64}$/;
+const HEX128 = /^[0-9a-f]{128}$/;
+let shapeOk = true;
+function shape(cond, msg) {
+  if (!cond) { problems.push('snapshot: ' + msg); shapeOk = false; }
+}
+shape(Number.isSafeInteger(snap.tree_size) && snap.tree_size >= 0,
+      `tree_size must be a non-negative integer, got ${JSON.stringify(snap.tree_size)}`);
+shape(typeof snap.root_hash === 'string' && HEX64.test(snap.root_hash),
+      'root_hash must be 64 lowercase hex characters');
+shape(typeof snap.signature === 'string' && HEX128.test(snap.signature),
+      'signature must be 128 lowercase hex characters');
+shape(Number.isSafeInteger(snap.timestamp) && snap.timestamp >= 0,
+      'timestamp must be a non-negative integer');
+shape(typeof snap.log_pubkey_hex === 'string' && HEX64.test(snap.log_pubkey_hex),
+      'log_pubkey_hex must be 64 lowercase hex characters');
+shape(Array.isArray(D.leaves), 'leaves must be an array');
+shape(Array.isArray(D.sth_history), 'sth_history must be an array');
+shape(Array.isArray(D.builds), 'builds must be an array');
+
+let leafHashes = null;
+let pubRaw = null;
+
+if (!shapeOk) {
+  console.log('');
+  console.log(`BUNDLE INVALID -- ${problems.length} problem(s):`);
+  for (const p of problems) console.log('  ! ' + p);
+  process.exit(1);
 }
 
-// --- 1-2. The signed head, re-derived from the leaves the bundle ships ----
-const t0 = Date.now();
-const leafHashes = D.leaves.map(s => V.leafHash(V.utf8(s)));
-const root = V.hex(V.mth(leafHashes, snap.tree_size));
-const ms = Date.now() - t0;
-
-note(`rebuilt root from ${snap.tree_size} leaves in ${ms} ms`);
-if (root !== snap.root_hash) {
-  problems.push(`recomputed root ${root} != signed head ${snap.root_hash}`);
-} else {
-  note(`root matches the signed head: ${root.slice(0, 16)}...`);
-}
-
-const pubRaw = V.unhex(snap.log_pubkey_hex);
-if (!V.verifySth(pubRaw, snap)) {
-  problems.push('Ed25519 signature over the current head is invalid');
-} else {
-  note('Ed25519 signature over the head verifies');
-}
-
-// The bundle also states a key_id; it must be derivable from the key shipped,
-// or the bundle is internally inconsistent.
-const SPKI_PREFIX = '302a300506032b6570032100';
-const derivedKeyId = 'sha256:' + V.hex(
-  V.sha256(V.unhex(SPKI_PREFIX + snap.log_pubkey_hex)));
-if (snap.key_id !== derivedKeyId) {
-  problems.push(`snapshot.key_id ${snap.key_id} is not the SPKI digest of ` +
-                `the key shipped (${derivedKeyId})`);
-}
-
-// Key authenticity: only an out-of-band value can settle it.
-if (expectKey) {
-  if (snap.log_pubkey_hex.toLowerCase() !== expectKey) {
-    problems.push(`log key ${snap.log_pubkey_hex} != expected ${expectKey}`);
+try {
+  // --- 0. The leaf set must be exactly the signed head, no more ------------
+  // Leaves beyond tree_size are covered by no signature. Without this check,
+  // appending one unsigned line to leaves.js is enough to make an unpublished
+  // package look published -- no key required.
+  if (D.leaves.length !== snap.tree_size) {
+    problems.push(`leaves.js holds ${D.leaves.length} records but the signed ` +
+                  `head covers ${snap.tree_size} -- the extra records are ` +
+                  `signed by nothing`);
+  } else if (snap.package_records !== snap.tree_size) {
+    problems.push(`snapshot.package_records (${snap.package_records}) != ` +
+                  `tree_size (${snap.tree_size})`);
   } else {
-    note(`log key matches the one supplied out of band`);
+    note(`${D.leaves.length} records, exactly matching the signed head`);
   }
-} else {
-  caveats.push('the log key was read from this bundle, not pinned -- a ' +
-               'bundle re-signed under another key would verify against ' +
-               'itself. Re-run with --expect-key <64-hex> to close this.');
-  note(`log key (UNPINNED): ${snap.log_pubkey_hex.slice(0, 16)}...`);
-  note(`  key_id ${snap.key_id.slice(0, 23)}... -- compare out of band`);
-}
 
-// --- 3. Every historical head must be a prefix of the tree, and signed ----
-for (const h of D.sth_history) {
-  if (h.tree_size > snap.tree_size) {
-    problems.push(`history contains a head at size ${h.tree_size}, beyond ` +
-                  `the snapshot's ${snap.tree_size}`);
-    continue;
-  }
-  const r = V.hex(V.mth(leafHashes, h.tree_size));
-  if (r !== h.root_hash) {
-    problems.push(`head at size ${h.tree_size}: prefix root ${r} != ${h.root_hash}`);
-  } else if (!V.verifySth(pubRaw, h)) {
-    problems.push(`head at size ${h.tree_size}: bad signature`);
+  // --- 1-2. The signed head, re-derived from the leaves the bundle ships ----
+  const t0 = Date.now();
+  leafHashes = D.leaves.map(s => V.leafHash(V.utf8(s)));
+  const root = V.hex(V.mth(leafHashes, snap.tree_size));
+  const ms = Date.now() - t0;
+
+  note(`rebuilt root from ${snap.tree_size} leaves in ${ms} ms`);
+  if (root !== snap.root_hash) {
+    problems.push(`recomputed root ${root} != signed head ${snap.root_hash}`);
   } else {
-    note(`head size ${h.tree_size} reproduced by prefix and signed`);
+    note(`root matches the signed head: ${root.slice(0, 16)}...`);
   }
-}
-if (D.sth_history.length &&
-    D.sth_history[D.sth_history.length - 1].tree_size !== snap.tree_size) {
-  problems.push('the snapshot head is not the newest head in its own history');
-}
 
-// Consistency between consecutive heads. Both roots were already matched
-// against this same leaf set above, so this is a demonstration of the
-// append-only property rather than an independent check -- say so.
-for (let i = 1; i < D.sth_history.length; i++) {
-  const a = D.sth_history[i - 1], b = D.sth_history[i];
-  if (a.tree_size === 0) {
-    note(`consistency 0 -> ${b.tree_size} not applicable (empty tree)`);
-    continue;
+  pubRaw = V.unhex(snap.log_pubkey_hex);
+  if (!V.verifySth(pubRaw, snap)) {
+    problems.push('Ed25519 signature over the current head is invalid');
+  } else {
+    note('Ed25519 signature over the head verifies');
   }
-  try {
-    const proof = V.consistencyProof(leafHashes, a.tree_size, b.tree_size);
-    const ok = V.verifyConsistency(a.tree_size, b.tree_size,
-      V.unhex(a.root_hash), V.unhex(b.root_hash), proof);
-    if (!ok) problems.push(`consistency ${a.tree_size}->${b.tree_size} failed`);
-    else note(`consistency ${a.tree_size} -> ${b.tree_size} demonstrated ` +
-              `(${proof.length} nodes, derived from these same leaves)`);
-  } catch (e) {
-    problems.push(`consistency ${a.tree_size}->${b.tree_size}: ${e.message}`);
+
+  // The bundle also states a key_id; it must be derivable from the key shipped,
+  // or the bundle is internally inconsistent.
+  const SPKI_PREFIX = '302a300506032b6570032100';
+  const derivedKeyId = 'sha256:' + V.hex(
+    V.sha256(V.unhex(SPKI_PREFIX + snap.log_pubkey_hex)));
+  if (snap.key_id !== derivedKeyId) {
+    problems.push(`snapshot.key_id ${snap.key_id} is not the SPKI digest of ` +
+                  `the key shipped (${derivedKeyId})`);
   }
+
+  // Key authenticity: only an out-of-band value can settle it.
+  if (expectKey) {
+    if (snap.log_pubkey_hex.toLowerCase() !== expectKey) {
+      problems.push(`log key ${snap.log_pubkey_hex} != expected ${expectKey}`);
+    } else {
+      note(`log key matches the one supplied out of band`);
+    }
+  } else {
+    caveats.push('the log key was read from this bundle, not pinned -- a ' +
+                 'bundle re-signed under another key would verify against ' +
+                 'itself. Re-run with --expect-key <64-hex> to close this.');
+    note(`log key (UNPINNED): ${snap.log_pubkey_hex.slice(0, 16)}...`);
+    note(`  key_id ${snap.key_id.slice(0, 23)}... -- compare out of band`);
+  }
+
+  // --- 3. Every historical head must be a prefix of the tree, and signed ----
+  for (const h of D.sth_history) {
+    if (h.tree_size > snap.tree_size) {
+      problems.push(`history contains a head at size ${h.tree_size}, beyond ` +
+                    `the snapshot's ${snap.tree_size}`);
+      continue;
+    }
+    const r = V.hex(V.mth(leafHashes, h.tree_size));
+    if (r !== h.root_hash) {
+      problems.push(`head at size ${h.tree_size}: prefix root ${r} != ${h.root_hash}`);
+    } else if (!V.verifySth(pubRaw, h)) {
+      problems.push(`head at size ${h.tree_size}: bad signature`);
+    } else {
+      note(`head size ${h.tree_size} reproduced by prefix and signed`);
+    }
+  }
+  if (D.sth_history.length &&
+      D.sth_history[D.sth_history.length - 1].tree_size !== snap.tree_size) {
+    problems.push('the snapshot head is not the newest head in its own history');
+  }
+
+  // Consistency between consecutive heads. Both roots were already matched
+  // against this same leaf set above, so this is a demonstration of the
+  // append-only property rather than an independent check -- say so.
+  for (let i = 1; i < D.sth_history.length; i++) {
+    const a = D.sth_history[i - 1], b = D.sth_history[i];
+    if (a.tree_size === 0) {
+      note(`consistency 0 -> ${b.tree_size} not applicable (empty tree)`);
+      continue;
+    }
+    try {
+      const proof = V.consistencyProof(leafHashes, a.tree_size, b.tree_size);
+      const ok = V.verifyConsistency(a.tree_size, b.tree_size,
+        V.unhex(a.root_hash), V.unhex(b.root_hash), proof);
+      if (!ok) problems.push(`consistency ${a.tree_size}->${b.tree_size} failed`);
+      else note(`consistency ${a.tree_size} -> ${b.tree_size} demonstrated ` +
+                `(${proof.length} nodes, derived from these same leaves)`);
+    } catch (e) {
+      problems.push(`consistency ${a.tree_size}->${b.tree_size}: ${e.message}`);
+    }
+  }
+} catch (e) {
+  // Same rule as the build loop: a verifier that dies mid-render
+  // tells the reader nothing. Report and keep going.
+  problems.push('while checking the log: ' +
+                (e && e.message ? e.message : e));
 }
 
 // --- 4-5. Each build ------------------------------------------------------
 // Membership is decided ONLY against leaves covered by the signed head.
+if (leafHashes === null) {
+  console.log('');
+  console.log(`BUNDLE INVALID -- ${problems.length} problem(s):`);
+  for (const p of problems) console.log('  ! ' + p);
+  process.exit(1);
+}
 const signedLeaves = leafHashes.slice(0, snap.tree_size);
 const byLeafHash = new Map(signedLeaves.map((h, i) => [V.hex(h), i]));
 
