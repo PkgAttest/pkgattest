@@ -1,7 +1,11 @@
 #!/bin/bash
-# build-image.sh {A|B} — build the OCP-2026 demo images.
+# build-image.sh {A|B|C} — build the OCP-2026 demo images.
 #   A: baseline image (dropbear 2026.92), package-aware measurement enabled.
 #   B: identical except dropbear pinned back to 2026.91. Never published.
+#   C: a later build of the same line (new BUILD_ID). Published, so the log
+#      gets a second signed tree head — consistency proofs need two. C must
+#      never alter A or B: their artifacts are already copied into
+#      artifacts/{A,B}/ and are not rebuilt.
 #
 # Replicates rpi3-build.sh's conf generation (the meta-evb-raspberrypi
 # template has no layer.conf, so conf files are pre-generated), then adds the
@@ -10,7 +14,14 @@
 set -e
 
 VARIANT="${1:-}"
-case "$VARIANT" in A|B) ;; *) echo "usage: $0 {A|B}" >&2; exit 2 ;; esac
+case "$VARIANT" in A|B|C) ;; *) echo "usage: $0 {A|B|C}" >&2; exit 2 ;; esac
+
+# BUILD_ID pins os-release's BUILD_ID (a measured file). C uses a distinct one
+# so it is a genuinely different build of the same source.
+case "$VARIANT" in
+    A|B) BUILD_ID_VAL="ocp2026-demo" ;;
+    C)   BUILD_ID_VAL="ocp2026-demo-c" ;;
+esac
 
 # DEMO_ROOT = parent of this script's dir (works from any clone location);
 # OEROOT = the openbmc tree (override via env when the demo repo lives
@@ -58,7 +69,7 @@ KERNEL_IMAGETYPES = "Image"
 # --- pkg-integrity demo configuration ---
 require conf/machine/include/tpm2.inc
 SIGNING_KEY = "$DEMO_ROOT/pkg-integrity/keys/konasense-demo.priv"
-BUILD_ID = "ocp2026-demo"
+BUILD_ID = "$BUILD_ID_VAL"
 EOF
 
 if [ "$VARIANT" = "B" ]; then

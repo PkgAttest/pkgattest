@@ -7,7 +7,8 @@ SSH     := ssh -i keys/id_ed25519 -o UserKnownHostsFile=keys/known_hosts \
            -o StrictHostKeyChecking=no -o LogLevel=ERROR root@$(HOST)
 
 .PHONY: venv keys test log publish trust-device wait-device xcheck \
-        beat1 beat2 beat3 beat4 closer qr freeze e2e-sim build-a build-b
+        beat1 beat2 beat3 beat4 closer qr freeze e2e-sim build-a build-b \
+        build-c publish-c
 
 venv:
 	python3 -m venv .venv
@@ -31,8 +32,9 @@ keys:
 test:
 	$(PYTEST) -q tests
 
+# Writes are off by default; publishing needs --writable.
 log:
-	$(PY) log_server.py
+	$(PY) log_server.py --writable
 
 publish:
 	$(PY) publish.py --measurements $(A_MEAS)
@@ -42,6 +44,14 @@ build-a:
 
 build-b:
 	./build-image.sh B
+
+# Image C: a later build of the same line. Publishing it gives the log a
+# second signed tree head, which consistency proofs require.
+build-c:
+	./build-image.sh C
+
+publish-c:
+	$(PY) publish.py --measurements artifacts/C/obmc-phosphor-image-raspberrypi3-64.pkg-measurements.json
 
 # Optional if the baked key ever fails: push the ssh key by password.
 trust-device:

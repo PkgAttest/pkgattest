@@ -11,12 +11,12 @@ published. Demo plan: `../demo.md` (Demo A). Formats and trust model:
 | path | what |
 |---|---|
 | `pkgintegrity/` | shared library: merkle (device tree + RFC 6962 log), canonical formats, TPM quote parsing, image signatures — plus `cli.py` (the `pkgattest` command) and `attest.py` (Beats 3/4 verifier) |
-| `log_server.py` | transparency log (stdlib HTTP, Ed25519 STH), port 8799 |
+| `log_server.py` | transparency log (stdlib HTTP, Ed25519 STH), port 8799, localhost-only; `--writable` to publish |
 | `publish.py` | publish image A's measurements (drift-gated) — **never image B** |
 | `verify.py` | thin wrapper for `pkgattest attest` (ssh collect → root/PCR/quote/inclusion-proof chain) |
 | `verify_image.py` | thin wrapper for `pkgattest verify-image` (Beat 1: mmc-tar signatures) |
 | `pyproject.toml` | installable `pkgattest` package (`make venv` does `pip install -e .`) |
-| `build-image.sh {A\|B}` | build the two demo images (B: dropbear 2026.91) |
+| `build-image.sh {A\|B\|C}` | build the demo images (B: dropbear 2026.91, never published; C: a later build giving the log a second tree head) |
 | `demo/` | per-beat frame scripts, env |
 | `sim/` | hardware-free path: synthetic evidence bundles, laptop swtpm, e2e |
 | `tests/` | pytest (merkle vectors, bash canary, quote, log, e2e frames) |
@@ -30,6 +30,7 @@ make venv keys test        # python env + keys + unit tests
 make e2e-sim               # both money frames, laptop-only, no Pi, no TPM
 make build-a               # image A (~1h first time, then minutes)
 make build-b               # image B (dropbear pinned back, ~20-35 min)
+make build-c               # image C (later build; second signed tree head)
 # flash artifacts/A wic.xz to SD card A, artifacts/B to card B (bmaptool/dd)
 make log                   # terminal 1: transparency log
 make publish               # publish image A (image B never gets published)
