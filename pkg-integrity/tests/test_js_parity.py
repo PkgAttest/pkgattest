@@ -225,6 +225,90 @@ def test_utf8_byte_sort_not_utf16(tmp_path):
 
 
 @requires_node
+def test_canonical_json_escaping_matches_python_everywhere(tmp_path):
+    """The real data is 100% ASCII, so the parity vectors cannot exercise
+    pyJsonString at all. Fuzz it against Python across the character space —
+    control characters, DEL, U+2028/U+2029, the surrogate range boundaries and
+    astral characters, where Python emits a surrogate *pair* of \\uXXXX
+    escapes from one codepoint."""
+    import random
+    random.seed(11)
+    cases = [chr(cp) for cp in
+             list(range(0, 0x90)) + [0x7f, 0xa0, 0xe9, 0x151, 0x2028, 0x2029,
+                                     0xd7ff, 0xe000, 0xfffd, 0xffff,
+                                     0x10000, 0x1f600, 0x10ffff]]
+    cases += ["", '"', "\\", "</script>", 'a"b\\c', "tab\there", "nl\nhere",
+              "\x00\x01\x1f"]
+    alpha = [chr(c) for c in (0x41, 0x7f, 0xe9, 0x151, 0x2028, 0x1f600,
+                              0x10ffff, 0x22, 0x5c, 0x0a)]
+    for _ in range(300):
+        cases.append("".join(random.choice(alpha)
+                             for _ in range(random.randint(0, 8))))
+
+    payload = tmp_path / "cases.json"
+    payload.write_text(json.dumps(
+        {"cases": cases,
+         "expected": [json.dumps(c, ensure_ascii=True) for c in cases]}))
+
+    script = (
+        "const V=require(%s);const d=require(%s);let bad=[];"
+        "d.cases.forEach((c,i)=>{if(V.pyJsonString(c)!==d.expected[i])"
+        "bad.push(i);});"
+        "console.log(JSON.stringify({n:d.cases.length,bad:bad.slice(0,5),"
+        "count:bad.length}));"
+        % (json.dumps(VERIFY_JS), json.dumps(str(payload))))
+    proc = subprocess.run([NODE, "-e", script], capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["count"] == 0, (
+        "pyJsonString diverged from Python on %d/%d cases (first: %r)"
+        % (result["count"], result["n"],
+           [cases[i] for i in result["bad"]]))
+
+
+@requires_node
+def test_sort_order_matches_python_and_the_naive_sort_would_not(tmp_path):
+    """compareUtf8 must equal Python's codepoint order. The same test proves
+    the guard is load-bearing: plain Array.sort() gets a large fraction of
+    these wrong."""
+    import random
+    random.seed(23)
+    alpha = [chr(c) for c in (0x20, 0x21, 0x30, 0x41, 0x5a, 0x61, 0x7a, 0x7f,
+                              0xa0, 0xe9, 0x151, 0x7ff, 0x800, 0xd7ff, 0xe000,
+                              0xfffd, 0xffff, 0x10000, 0x1f600, 0x10ffff)]
+    lists = [["".join(random.choice(alpha)
+                      for _ in range(random.randint(0, 6)))
+              for _ in range(random.randint(2, 10))] for _ in range(200)]
+    lists += [["", "\U0001F600"], ["￿", "\U00010000"],
+              ["ab", "a\U0001F600b"]]
+
+    payload = tmp_path / "lists.json"
+    payload.write_text(json.dumps(
+        {"lists": lists, "sorted": [sorted(l) for l in lists]}))
+
+    script = (
+        "const V=require(%s);const d=require(%s);let bad=0,naive=0;"
+        "d.lists.forEach((l,i)=>{"
+        " if(JSON.stringify(l.slice().sort(V.compareUtf8))!=="
+        "    JSON.stringify(d.sorted[i])) bad++;"
+        " if(JSON.stringify(l.slice().sort())!==JSON.stringify(d.sorted[i]))"
+        "    naive++;});"
+        "console.log(JSON.stringify({bad:bad,naive:naive,n:d.lists.length}));"
+        % (json.dumps(VERIFY_JS), json.dumps(str(payload))))
+    proc = subprocess.run([NODE, "-e", script], capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+    assert result["bad"] == 0, (
+        "compareUtf8 diverged from Python on %d/%d lists"
+        % (result["bad"], result["n"]))
+    assert result["naive"] > 0, (
+        "Array.sort() agreed everywhere, so this test is not proving the "
+        "comparator is needed — strengthen the corpus")
+
+
+@requires_node
 def test_vendored_crypto_is_reproducible():
     """The committed vendor bundle must be exactly what the pinned upstream
     sources regenerate — offline, no network."""
