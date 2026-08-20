@@ -12,6 +12,7 @@ SSH     := ssh -i keys/id_ed25519 -o UserKnownHostsFile=keys/known_hosts \
 venv:
 	python3 -m venv .venv
 	$(PIP) install -q -r requirements.txt
+	$(PIP) install -q -e .
 
 keys:
 	@test -f keys/konasense-demo.priv || (umask 077 && \

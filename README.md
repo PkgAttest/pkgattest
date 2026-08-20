@@ -22,7 +22,7 @@ FAIL: 1 of 2131 packages unaccounted for
 | dir | what |
 |---|---|
 | `meta-pkg-integrity/` | Yocto layer: `pkg-measurements.bbclass` (canonical per-package leaf preimages + merkle root, baked into the image and deployed as `<image>.pkg-measurements.json`), `pkg-witness` boot agent (re-measures, extends the root into swtpm PCR 14 via kernel vtpm-proxy, serves evidence over ssh), kernel config fragment, signing enablement, and the pinned-back `dropbear` recipe for the demo's image B |
-| `pkg-integrity/` | Host tooling (Python): transparency log (RFC 6962 + Ed25519 signed tree head), drift-gated publisher, attestation verifier, image-signature verifier, demo frame scripts, hardware-free simulation path, tests |
+| `pkg-integrity/` | Host tooling (Python): transparency log (RFC 6962 + Ed25519 signed tree head), drift-gated publisher, the installable `pkgattest` CLI (image-signature, tree-head, per-package inclusion-proof, measurement-doc and full-attestation verifiers), demo frame scripts, hardware-free simulation path, tests |
 
 `pkg-integrity/SPEC.md` is the **binding byte-level spec** shared by the three
 format implementations (build class / target bash agent / host python) —
@@ -39,7 +39,9 @@ Requires an [OpenBMC](https://github.com/openbmc/openbmc) checkout with
 git clone https://github.com/PkgAttest/pkgattest.git
 cd pkgattest/pkg-integrity
 make venv keys              # python env + signing/log/ssh keys (never committed)
-make test                   # 28 tests, no hardware needed
+make test                   # 43 tests, no hardware needed
+.venv/bin/pkgattest --help  # CLI: verify-image / verify-sth / verify-package /
+                            #      verify-measurements / attest
 make e2e-sim                # both demo frames, laptop-only
 OEROOT=/path/to/openbmc ./build-image.sh A    # baseline image
 OEROOT=/path/to/openbmc ./build-image.sh B    # one package back, never published

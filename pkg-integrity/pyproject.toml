@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pkgattest"
+version = "0.1.0"
+description = "Package-aware integrity for OpenBMC: image-signature, transparency-log and TPM-attestation verifiers"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "KonaSense" }]
+dependencies = ["cryptography>=42"]
+
+[project.scripts]
+pkgattest = "pkgintegrity.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/PkgAttest/pkgattest"
+
+[tool.setuptools]
+packages = ["pkgintegrity"]
