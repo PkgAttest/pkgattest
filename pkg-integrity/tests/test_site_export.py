@@ -141,18 +141,20 @@ def test_unpublished_build_is_named_not_hidden(tmp_path):
     out = tmp_path / "dist"
     manifest = _export(base, out)
     (build,) = manifest["builds"]
-    assert build["status"] == "unpublished"
+    assert build["status"] == "packages-missing"
     assert build["unpublished_count"] == 1
 
 
 def test_absolute_paths_never_reach_the_bundle(tmp_path):
     """SHA256SUMS records absolute paths from the machine that built the
     image; a public bundle must carry basenames only."""
+    import hashlib
     base, doc = _fixture_tree(tmp_path)
     art = base / "artifacts" / "A"
+    doc_path = art / "test.pkg-measurements.json"
+    real = hashlib.sha256(doc_path.read_bytes()).hexdigest()
     (art / "SHA256SUMS").write_text(
-        "%s  /home/somebody/secret/path/test.pkg-measurements.json\n"
-        % ("11" * 32))
+        "%s  /home/somebody/secret/path/test.pkg-measurements.json\n" % real)
     out = tmp_path / "dist"
     _export(base, out)
 
@@ -164,8 +166,9 @@ def test_absolute_paths_never_reach_the_bundle(tmp_path):
 
     build = _load_data(str(out), "build_A")
     assert "test.pkg-measurements.json" in build["artifacts"]
-    assert build["artifacts"]["test.pkg-measurements.json"]["sha256"] == \
-        "11" * 32
+    # The digest the page shows is taken from the bytes, not copied from
+    # SHA256SUMS — that file is only ever a cross-check.
+    assert build["artifacts"]["test.pkg-measurements.json"]["sha256"] == real
 
 
 # ---------------------------------------------------------------- refusals
@@ -240,6 +243,89 @@ def test_export_refuses_a_head_that_does_not_match_the_log(tmp_path):
         _export(base, tmp_path / "dist")
 
 
+def test_export_refuses_leaves_beyond_the_signed_head(tmp_path):
+    """The blocking one: a record past `tree_size` is covered by no signature,
+    so if the exporter resolved membership over the whole store, appending one
+    line to log.jsonl would make an unpublished package look published — no
+    signing key needed."""
+    base, doc = _fixture_tree(tmp_path, publish_all=False)
+    missing = doc["packages"][-1]
+    forged = canonical.log_leaf_data(
+        doc["image_line"], missing["name"], missing["version"],
+        missing["arch"], missing["leaf_hash"]).decode("ascii")
+    store = base / "log" / "log.jsonl"
+    with open(store, "a") as f:
+        f.write(json.dumps({"index": 999, "leaf": forged}) + "\n")
+
+    with pytest.raises(site_export.ExportError, match="signed by nothing"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_takes_the_largest_head_not_the_last_line(tmp_path):
+    """Reordering sth-history.jsonl must not change what gets exported."""
+    base, _ = _fixture_tree(tmp_path)
+    hist = base / "log" / "sth-history.jsonl"
+    recs = [json.loads(l) for l in hist.read_text().splitlines() if l.strip()]
+    assert len(recs) >= 2
+    hist.write_text("".join(json.dumps(r, sort_keys=True) + "\n"
+                            for r in reversed(recs)))
+    manifest = _export(base, tmp_path / "dist")
+    assert manifest["tree_size"] == max(r["tree_size"] for r in recs)
+
+
+def test_export_refuses_a_wrong_artifact_digest(tmp_path):
+    base, _ = _fixture_tree(tmp_path)
+    (base / "artifacts" / "A" / "SHA256SUMS").write_text(
+        "%s  test.pkg-measurements.json\n" % ("11" * 32))
+    with pytest.raises(site_export.ExportError, match="hashes to"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_refuses_a_receipt_that_disagrees(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    (base / "artifacts" / "A" / "publication-receipt.json").write_text(
+        json.dumps({"merkle_root": "22" * 32}))
+    with pytest.raises(site_export.ExportError, match="publication receipt"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_refuses_two_measurement_documents(tmp_path):
+    """Picking the alphabetically-first would let a stale document win, and
+    its device root and PCR14 would go on the page."""
+    base, doc = _fixture_tree(tmp_path)
+    stale = dict(doc, image_name="STALE-IMAGE")
+    (base / "artifacts" / "A" / "AAA-stale.pkg-measurements.json").write_text(
+        json.dumps(stale))
+    with pytest.raises(site_export.ExportError,
+                       match="exactly one measurement document"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_refuses_an_unusable_build_label(tmp_path):
+    """The label becomes a filename and a URL segment on the page."""
+    base, doc = _fixture_tree(tmp_path)
+    bad = base / "artifacts" / 'a" onerror=x'
+    bad.mkdir()
+    (bad / "test.pkg-measurements.json").write_text(json.dumps(doc))
+    with pytest.raises(site_export.ExportError, match="not a usable label"):
+        _export(base, tmp_path / "dist")
+
+
+def test_export_refuses_packages_that_are_not_name_sorted(tmp_path):
+    """SPEC.md section 2 requires name-sorted leaves and the on-device bash
+    sorts, so an unsorted document yields a root no BMC can reproduce.
+    verify_measurements_doc hashes in document order and cannot catch it."""
+    base, doc = _fixture_tree(tmp_path)
+    shuffled = dict(doc)
+    shuffled["packages"] = list(reversed(doc["packages"]))
+    shuffled["merkle_root"] = merkle.device_root(
+        [p["leaf_hash"] for p in shuffled["packages"]])
+    (base / "artifacts" / "A" / "test.pkg-measurements.json").write_text(
+        json.dumps(shuffled))
+    with pytest.raises(site_export.ExportError, match="name-sorted"):
+        _export(base, tmp_path / "dist")
+
+
 def test_export_refuses_without_a_signed_head(tmp_path):
     base, _ = _fixture_tree(tmp_path)
     (base / "log" / "sth-history.jsonl").unlink()
@@ -257,9 +343,9 @@ def test_real_export_reproduces_the_demo(tmp_path):
     by_label = {b["label"]: b for b in manifest["builds"]}
 
     # These are derived by the exporter, never hardcoded in the site.
-    assert by_label["A"]["status"] == "published"
+    assert by_label["A"]["status"] == "all-packages-published"
     assert by_label["A"]["unpublished_count"] == 0
-    assert by_label["B"]["status"] == "unpublished"
+    assert by_label["B"]["status"] == "packages-missing"
     assert by_label["B"]["unpublished_count"] == 1
 
 
@@ -278,6 +364,135 @@ def test_browser_path_verifies_the_real_bundle(tmp_path):
     # The punchline must be derived, and named.
     assert "dropbear 2026.91" in proc.stdout
     assert "1 of 2131 packages unaccounted for" in proc.stdout
+
+
+def _patch_data(path, key, mutate):
+    """Rewrite a `PKGI_DATA["key"] = <json>;` file in place."""
+    text = path.read_text()
+    m = re.search(r'PKGI_DATA\[%s\] = (.*);\n\Z'
+                  % re.escape(json.dumps(key)), text, re.S)
+    assert m, "no assignment for %r in %s" % (key, path)
+    value = mutate(json.loads(m.group(1)))
+    path.write_text(text[:m.start(1)]
+                    + json.dumps(value, separators=(",", ":"), sort_keys=True)
+                    + ";\n")
+
+
+@pytest.mark.skipif(NODE is None, reason="node not present")
+def test_appending_an_unsigned_leaf_is_caught(tmp_path):
+    """The attack that motivated scoping membership to the signed head.
+
+    Every leaf past `tree_size` is covered by no signature, so if membership
+    were decided over the whole leaf array, appending one unsigned line to
+    leaves.js would be enough to make an unpublished package look published —
+    no key required, and it would defeat the demo's entire punchline.
+    """
+    base, doc = _fixture_tree(tmp_path, publish_all=False)
+    out = tmp_path / "dist"
+    _export(base, out)
+
+    # Whatever package was withheld, forge a log entry for it.
+    missing = doc["packages"][-1]
+    forged = canonical.log_leaf_data(
+        doc["image_line"], missing["name"], missing["version"],
+        missing["arch"], missing["leaf_hash"]).decode("ascii")
+
+    _patch_data(out / "data" / "leaves.js", "leaves",
+                lambda arr: arr + [forged])
+    _patch_data(out / "data" / "builds-index.js", "builds",
+                lambda builds: [dict(b, status="all-packages-published",
+                                     unpublished_count=0) for b in builds])
+
+    proc = subprocess.run(
+        [NODE, os.path.join(BASE, "tools", "verify-bundle.js"), str(out)],
+        capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 1, proc.stdout
+    assert "BUNDLE INVALID" in proc.stdout
+    assert "signed by nothing" in proc.stdout
+
+
+@pytest.mark.skipif(NODE is None, reason="node not present")
+def test_unpinned_key_is_declared_not_hidden(tmp_path):
+    """The bundle ships the key it verifies against, so a re-signed bundle
+    verifies against itself. That limit must be printed, and --expect-key
+    must close it."""
+    base, _ = _fixture_tree(tmp_path)
+    out = tmp_path / "dist"
+    _export(base, out)
+    tool = os.path.join(BASE, "tools", "verify-bundle.js")
+
+    plain = subprocess.run([NODE, tool, str(out)], capture_output=True,
+                           text=True, timeout=300)
+    assert plain.returncode == 0
+    assert "UNPINNED" in plain.stdout and "caveat:" in plain.stdout
+
+    from cryptography.hazmat.primitives import serialization
+    raw = merkle.load_ed25519_public(PUB).public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex()
+
+    pinned = subprocess.run([NODE, tool, str(out), "--expect-key", raw],
+                            capture_output=True, text=True, timeout=300)
+    assert pinned.returncode == 0
+    assert "matches the one supplied out of band" in pinned.stdout
+    assert "caveat:" not in pinned.stdout
+
+    wrong = subprocess.run([NODE, tool, str(out), "--expect-key", "aa" * 32],
+                           capture_output=True, text=True, timeout=300)
+    assert wrong.returncode == 1
+    assert "BUNDLE INVALID" in wrong.stdout
+
+
+@pytest.mark.skipif(NODE is None, reason="node not present")
+def test_per_build_record_must_agree_with_the_index(tmp_path):
+    base, _ = _fixture_tree(tmp_path)
+    out = tmp_path / "dist"
+    _export(base, out)
+    # The fixture publishes everything, so flip the index the other way to
+    # create a genuine disagreement with the per-build record.
+    _patch_data(out / "data" / "builds-index.js", "builds",
+                lambda builds: [dict(b, status="packages-missing",
+                                     unpublished_count=99) for b in builds])
+    # The per-build file still says what the exporter derived, so the two
+    # now disagree — which must be a failure, not a silent preference.
+    proc = subprocess.run(
+        [NODE, os.path.join(BASE, "tools", "verify-bundle.js"), str(out)],
+        capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 1
+    assert "differs between builds-index.js" in proc.stdout
+
+
+def test_snapshot_ships_what_its_recipe_needs(tmp_path):
+    """SNAPSHOT.txt tells the reader to re-check the head offline. The files
+    that recipe names have to actually be in the bundle."""
+    base, _ = _fixture_tree(tmp_path)
+    out = tmp_path / "dist"
+    _export(base, out)
+
+    text = (out / "SNAPSHOT.txt").read_text()
+    assert "verify-sth --sth-file sth.json" in text
+    assert "--log-pub log_ed25519.pub" in text
+    assert (out / "sth.json").exists()
+    assert (out / "log_ed25519.pub").exists()
+
+    sth = json.loads((out / "sth.json").read_text())
+    assert merkle.verify_sth(merkle.load_ed25519_public(
+        str(out / "log_ed25519.pub")), sth)
+
+    # And the honest caveats must survive edits to the template.
+    assert "does NOT prove that key is the log's" in text
+    assert "No entry commits to" in text
+
+
+def test_key_id_matches_the_cli_fingerprint(tmp_path):
+    """A reader comparing the page's key_id against `pkgattest verify-sth`
+    must see the same digest — two definitions would read as a mismatch."""
+    from pkgintegrity import cli
+    base, _ = _fixture_tree(tmp_path)
+    out = tmp_path / "dist"
+    _export(base, out)
+    snap = _load_data(str(out), "snapshot")
+    cli_fp = cli._key_fingerprint(merkle.load_ed25519_public(PUB))
+    assert snap["key_id"] == "sha256:" + cli_fp
 
 
 @pytest.mark.skipif(NODE is None, reason="node not present")

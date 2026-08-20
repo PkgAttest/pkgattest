@@ -70,7 +70,15 @@ var PKGI_VERIFY = (function (crypto) {
   var sha256 = crypto.sha256;
 
   /* Lexicographic comparison of the UTF-8 encodings -- this is what
-   * `LC_ALL=C sort` does, and what Python's codepoint ordering equals. */
+   * `LC_ALL=C sort` does, and what Python's codepoint ordering equals, for
+   * every encodable codepoint (a 4-byte astral sequence F0.. sorts above a
+   * 3-byte EF.., matching codepoint order).
+   *
+   * One known divergence, not reachable from real data: TextEncoder replaces
+   * a LONE surrogate with U+FFFD, so two distinct lone surrogates compare
+   * equal here while Python orders them, and Python's .encode("utf-8") would
+   * raise where this silently substitutes. Only a literal \\udXXX escape in a
+   * data file could produce one, and the build already rejects such paths. */
   function compareUtf8(a, b) {
     var x = utf8(a), y = utf8(b), n = Math.min(x.length, y.length);
     for (var i = 0; i < n; i++) {
@@ -257,10 +265,29 @@ var PKGI_VERIFY = (function (crypto) {
 
   /* pkg-leaf-v1 preimage. Port of canonical.PkgLeaf.preimage. Python sorts the
    * JOINED "<path> <sha256>" lines, so this must too. */
+  function str(value, what) {
+    if (typeof value !== 'string') {
+      throw new Error(what + ' must be a string, got ' +
+                      (value === null ? 'null' : typeof value));
+    }
+    return value;
+  }
+
   function pkgLeafPreimage(pkg) {
-    var lines = pkg.files.map(function (f) {
-      return (f.path !== undefined ? f.path : f[0]) + ' ' +
-             (f.sha256 !== undefined ? f.sha256 : f[1]);
+    /* Every field is type-checked before it reaches the preimage. Python
+     * raises on a malformed record (a file entry that will not unpack, a
+     * missing name); JS would happily interpolate "undefined" and produce a
+     * silently different leaf hash -- which reads downstream as "this package
+     * was never published" rather than as the data error it is. */
+    str(pkg.name, 'package name');
+    str(pkg.version, 'package version');
+    str(pkg.arch, 'package arch');
+    if (!Array.isArray(pkg.files)) throw new Error('package files must be an array');
+    var lines = pkg.files.map(function (f, i) {
+      var path = f.path !== undefined ? f.path : f[0];
+      var digest = f.sha256 !== undefined ? f.sha256 : f[1];
+      return str(path, 'file path #' + i) + ' ' +
+             str(digest, 'file sha256 #' + i);
     });
     lines.sort(compareUtf8);
     var head = 'pkg-leaf-v1\nname=' + pkg.name + '\nversion=' + pkg.version +
@@ -280,6 +307,16 @@ var PKGI_VERIFY = (function (crypto) {
                   '\n': '\\n', '\r': '\\r', '\t': '\\t' };
 
   function pyJsonString(s) {
+    /* Fail loudly on a non-string. Without this, `(2026).length` is undefined,
+     * the loop never runs, and the function returns an empty JSON string --
+     * so a version that arrived as a JSON number would hash to a well-formed
+     * but wrong leaf, miss the log, and make the page accuse a package of
+     * never having been published. A false accusation is the single worst
+     * output this project can produce; an exception is far better. */
+    if (typeof s !== 'string') {
+      throw new Error('log-leaf-v1 fields must be strings, got ' +
+                      (s === null ? 'null' : typeof s));
+    }
     var out = '"';
     for (var i = 0; i < s.length; i++) {
       var ch = s.charAt(i), code = s.charCodeAt(i);
@@ -318,20 +355,34 @@ var PKGI_VERIFY = (function (crypto) {
 
   /* Verify an STH.
    *
-   * Every field is validated before the payload is built. sth_payload() on the
-   * Python side formats with %s and validates nothing, so an unvalidated
-   * value here would be a parser differential: a float-valued tree_size would
-   * stringify as "2131" in Python and "2131" or "2.131e+3" in JS depending on
-   * magnitude, and a stray space would shift the whole payload. Rejecting
-   * anything that is not a plain decimal integer removes the question. */
+   * Type discipline matters here because the two implementations must agree
+   * on which heads are VALID, not merely on the bytes signed. Python's
+   * sth_payload formats size and timestamp with %d (only root_hex is %s), so
+   * a string-valued tree_size raises there and verify_sth returns False.
+   * Accepting one here would make the browser call a head valid that the
+   * exporter refuses to export. So: integers must be integers.
+   *
+   * This is deliberately stricter than Python in one direction \u2014 Python's %d
+   * would silently truncate a float, and we reject it. Being stricter than
+   * the reference can only reject things, never forge them.
+   *
+   * The key is validated separately and THROWS rather than returning false:
+   * an unusable key is an operator error, and reporting it as "signature
+   * invalid" would libel a perfectly good head. */
   function verifySth(pubKeyRaw, sth) {
+    if (!(pubKeyRaw instanceof Uint8Array) || pubKeyRaw.length !== 32) {
+      throw new Error('unusable log public key: expected 32 raw bytes, got ' +
+                      (pubKeyRaw && pubKeyRaw.length !== undefined
+                       ? pubKeyRaw.length + ' bytes' : typeof pubKeyRaw));
+    }
     if (sth === null || typeof sth !== 'object') return false;
-    if (!/^[0-9a-f]{64}$/.test(String(sth.root_hash))) return false;
-    if (!/^(0|[1-9][0-9]*)$/.test(String(sth.tree_size))) return false;
-    if (!/^(0|[1-9][0-9]*)$/.test(String(sth.timestamp))) return false;
-    if (!/^[0-9a-f]{128}$/.test(String(sth.signature))) return false;
-    var payload = sthPayload(String(sth.tree_size), sth.root_hash,
-                             String(sth.timestamp));
+    if (typeof sth.root_hash !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(sth.root_hash)) return false;
+    if (!Number.isInteger(sth.tree_size) || sth.tree_size < 0) return false;
+    if (!Number.isInteger(sth.timestamp) || sth.timestamp < 0) return false;
+    if (typeof sth.signature !== 'string' ||
+        !/^[0-9a-f]{128}$/.test(sth.signature)) return false;
+    var payload = sthPayload(sth.tree_size, sth.root_hash, sth.timestamp);
     return crypto.ed25519Verify(unhex(sth.signature), payload, pubKeyRaw);
   }
 
@@ -362,6 +413,29 @@ var PKGI_VERIFY = (function (crypto) {
     if (pyJsonString('a"b\\c\nde\u00e9f') !==
         '"a\\"b\\\\c\\nde\\u00e9f"') {
       problems.push('canonical JSON string escaping wrong');
+    }
+    /* sha512 and Ed25519 are only reachable through the signature path, so
+     * without these two checks a broken sha512Sync hook (a vendored-crypto
+     * upgrade, say) would make every genuine tree head report "signature
+     * INVALID" -- the most alarming thing this site can say -- while the
+     * self-test stayed green. RFC 8032 section 7.1, TEST 1. */
+    if (hex(crypto.sha512(utf8('abc'))) !==
+        'ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a' +
+        '2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f') {
+      problems.push('sha512 known-answer failed');
+    }
+    var rfcPub = unhex('d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325' +
+                       'af021a68f707511a');
+    var rfcSig = unhex('e5564300c360ac729086e2cc806e828a84877f1eb8e5d974' +
+                       'd873e065224901555fb8821590a33bacc61e39701cf9b46b' +
+                       'd25bf5f0595bbe24655141438e7a100b');
+    if (crypto.ed25519Verify(rfcSig, new Uint8Array(0), rfcPub) !== true) {
+      problems.push('ed25519 known-answer failed (valid signature rejected)');
+    }
+    var bad = rfcSig.slice();
+    bad[0] ^= 1;
+    if (crypto.ed25519Verify(bad, new Uint8Array(0), rfcPub) !== false) {
+      problems.push('ed25519 accepted a tampered signature');
     }
     return problems;
   }

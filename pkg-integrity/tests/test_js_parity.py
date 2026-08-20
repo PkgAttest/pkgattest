@@ -309,6 +309,97 @@ def test_sort_order_matches_python_and_the_naive_sort_would_not(tmp_path):
 
 
 @requires_node
+def test_selftest_catches_a_broken_primitive(tmp_path):
+    """A self-test that cannot fail is decoration.
+
+    sha512 and Ed25519 are reachable only through the signature path, so if
+    they broke — a vendored-crypto upgrade that renamed the sha512 hook, say —
+    every genuine tree head would report "signature INVALID", the most
+    alarming thing this site can say, while a self-test covering only sha256
+    stayed green. Load verify.js against deliberately broken primitives and
+    require it to notice each one."""
+    vendor = os.path.join(BASE, "site", "vendor", "pkgcrypto.js")
+    harness = r"""
+    const fs=require('fs'), vm=require('vm'), path=require('path');
+    function run(breakName){
+      const ctx=vm.createContext({TextEncoder,TextDecoder,console,require});
+      vm.runInContext(fs.readFileSync(VENDOR,'utf8'),ctx,{filename:'vendor'});
+      // Break exactly one primitive, leaving the rest genuine.
+      vm.runInContext(`
+        var __real = PKGI_CRYPTO;
+        PKGI_CRYPTO = {
+          sha256: ${breakName==='sha256'
+            ? '(b)=>new Uint8Array(32)' : '__real.sha256'},
+          sha512: ${breakName==='sha512'
+            ? '(b)=>new Uint8Array(64)' : '__real.sha512'},
+          ed25519Verify: ${breakName==='ed25519'
+            ? '()=>false' : (breakName==='ed25519-permissive'
+                             ? '()=>true' : '__real.ed25519Verify')},
+        };`, ctx);
+      vm.runInContext(fs.readFileSync(VERIFY,'utf8'),ctx,{filename:'verify'});
+      return vm.runInContext('PKGI_VERIFY.selfTest()',ctx);
+    }
+    const out={};
+    for (const b of ['none','sha256','sha512','ed25519','ed25519-permissive']){
+      out[b]=run(b);
+    }
+    console.log(JSON.stringify(out));
+    """
+    script = ("const VENDOR=%s, VERIFY=%s;\n%s"
+              % (json.dumps(vendor), json.dumps(VERIFY_JS), harness))
+    proc = subprocess.run([NODE, "-e", script], capture_output=True,
+                          text=True, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    result = json.loads(proc.stdout)
+
+    assert result["none"] == [], (
+        "self-test fails on genuine primitives: %r" % result["none"])
+    for broken in ("sha256", "sha512", "ed25519", "ed25519-permissive"):
+        assert result[broken], (
+            "selfTest did not notice a broken %s — it would render a green "
+            "tick on top of it" % broken)
+
+
+@requires_node
+def test_malformed_records_raise_rather_than_hash_wrong(tmp_path):
+    """Python raises on a malformed record; JS would happily interpolate
+    `undefined` or treat a number as an empty string, producing a well-formed
+    but wrong leaf. Downstream that reads as "this package was never
+    published" — a false accusation, which is the worst output this project
+    can produce. Every one of these must throw."""
+    cases = [
+        ("numeric version",
+         "V.logLeafData({arch:'a',image_line:'i',name:'n',"
+         "pkg_leaf_hash:'h',version:2026})"),
+        ("null field",
+         "V.logLeafData({arch:'a',image_line:'i',name:null,"
+         "pkg_leaf_hash:'h',version:'1'})"),
+        ("file entry missing its digest",
+         "V.pkgLeafPreimage({name:'p',version:'1',arch:'x',"
+         "files:[{path:'/a'}]})"),
+        ("missing package name",
+         "V.pkgLeafPreimage({version:'1',arch:'x',files:[]})"),
+        ("files not an array",
+         "V.pkgLeafPreimage({name:'p',version:'1',arch:'x',files:'nope'})"),
+    ]
+    script = "const V=require(%s);const out=[];" % json.dumps(VERIFY_JS)
+    for label, expr in cases:
+        script += ("try{%s;out.push([%s,false]);}"
+                   "catch(e){out.push([%s,true]);}"
+                   % (expr, json.dumps(label), json.dumps(label)))
+    # And a valid record must still work.
+    script += ("out.push(['valid', V.pkgLeafHash({name:'p',version:'1',"
+               "arch:'x',files:[{path:'/a',sha256:'ab'}]}).length === 64]);")
+    script += "console.log(JSON.stringify(out));"
+
+    proc = subprocess.run([NODE, "-e", script], capture_output=True,
+                          text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    for label, threw in json.loads(proc.stdout):
+        assert threw, "%s did not raise — it would hash a wrong leaf" % label
+
+
+@requires_node
 def test_vendored_crypto_is_reproducible():
     """The committed vendor bundle must be exactly what the pinned upstream
     sources regenerate — offline, no network."""

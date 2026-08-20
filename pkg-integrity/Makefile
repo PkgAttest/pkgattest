@@ -108,9 +108,18 @@ site-verify:
 
 # Check the bundle the way a browser will: rebuild every tree, verify every
 # signature, name any unpublished package. Needs node (test-only dependency).
+# Pins the log key from keys/ so the check is strict locally; a third party
+# without the key gets the same run with an explicit "key not pinned" caveat.
 site-check: site
-	@command -v node >/dev/null && node tools/verify-bundle.js site-dist \
-	  || echo "node not found — skipping the browser-path check"
+	@command -v node >/dev/null || { \
+	  echo "node not found — skipping the browser-path check"; exit 0; }; \
+	KEY=$$($(PY) -c "import sys;sys.path.insert(0,'.');\
+from pkgintegrity import merkle;\
+from cryptography.hazmat.primitives import serialization;\
+p=merkle.load_ed25519_public('keys/log_ed25519.pub');\
+print(p.public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw).hex())" 2>/dev/null); \
+	if [ -n "$$KEY" ]; then node tools/verify-bundle.js site-dist --expect-key "$$KEY"; \
+	else node tools/verify-bundle.js site-dist; fi
 
 site-serve: site
 	$(PY) log_server.py --site site-dist

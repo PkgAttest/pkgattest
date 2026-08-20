@@ -39,10 +39,17 @@ def _iso(ts):
 
 
 def _key_fingerprint(pub) -> str:
+    """sha256 over the SPKI DER.
+
+    This must stay the same definition the site bundle prints as `key_id`
+    (pkgintegrity/site_export.py): the whole point of a fingerprint here is
+    that a reader can compare what the CLI says against what the page says,
+    and two different digests of the same key would read as a mismatch.
+    """
     from cryptography.hazmat.primitives import serialization
-    raw = pub.public_bytes(serialization.Encoding.Raw,
-                           serialization.PublicFormat.Raw)
-    return hashlib.sha256(raw).hexdigest()
+    der = pub.public_bytes(serialization.Encoding.DER,
+                           serialization.PublicFormat.SubjectPublicKeyInfo)
+    return hashlib.sha256(der).hexdigest()
 
 
 # ---------------------------------------------------------------- verify-image

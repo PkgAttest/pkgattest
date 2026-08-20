@@ -25,6 +25,7 @@ fetch() are both CORS-blocked on file://.
 import hashlib
 import json
 import os
+import re
 import shutil
 
 from . import canonical, merkle
@@ -81,21 +82,33 @@ def _key_id(pub_pem_path):
     return "sha256:" + hashlib.sha256(der).hexdigest(), raw.hex()
 
 
+LABEL_RE = re.compile(r"[A-Za-z0-9._-]{1,64}\Z")
+
+
 def _read_sha256sums(path):
     """Parse SHA256SUMS, keeping only basenames.
 
     The file records absolute paths from whoever ran the build, so it leaks a
-    home directory into what is meant to be a public artifact.
+    home directory into what is meant to be a public artifact. It is used only
+    to cross-check digests we compute ourselves — never as their source.
     """
     out = {}
     if not os.path.exists(path):
         return out
     with open(path) as f:
         for line in f:
-            parts = line.split()
-            if len(parts) == 2 and len(parts[0]) == 64:
-                out[os.path.basename(parts[1])] = parts[0]
+            digest, sep, name = line.strip().partition("  ")
+            if sep and len(digest) == 64:
+                out[os.path.basename(name)] = digest
     return out
+
+
+def _digest_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def collect_builds(artifacts_dir):
@@ -111,6 +124,17 @@ def collect_builds(artifacts_dir):
                       if n.endswith(".pkg-measurements.json"))
         if not docs:
             continue
+        # The label becomes a filename and a URL segment on the page. Reject
+        # anything that is not a plain identifier rather than discovering it
+        # later as a broken link or an attribute injection.
+        if not LABEL_RE.match(label):
+            raise ExportError("artifact directory %r is not a usable label "
+                              "(expected [A-Za-z0-9._-])" % label)
+        # Picking docs[0] would let a stale document win silently, and its
+        # device root and PCR14 would go on the page.
+        if len(docs) != 1:
+            raise ExportError("%s: expected exactly one measurement document, "
+                              "found %d: %s" % (label, len(docs), docs))
         doc = canonical.load_measurements_json(os.path.join(d, docs[0]))
 
         problems = canonical.verify_measurements_doc(doc)
@@ -119,20 +143,46 @@ def collect_builds(artifacts_dir):
                 "%s: refusing to export, %d canonicalisation problem(s): %s"
                 % (label, len(problems), problems[0]))
 
+        # verify_measurements_doc hashes packages in document order. SPEC.md
+        # section 2 requires the device tree's leaves to be name-sorted, and
+        # the on-device bash sorts — so an unsorted document would yield a
+        # root no BMC can ever reproduce. canonical.py is frozen, so the
+        # check belongs here.
+        names = [p["name"] for p in doc["packages"]]
+        if names != sorted(names):
+            raise ExportError("%s: packages are not name-sorted, so the "
+                              "device root cannot match the one the BMC "
+                              "computes" % label)
+        if len(set(names)) != len(names):
+            raise ExportError("%s: duplicate package names" % label)
+
+        # Digests are computed from the bytes, never read out of SHA256SUMS;
+        # that file is only a cross-check. A digest the page presents as an
+        # artifact's fingerprint must have been taken from the artifact.
         sums = _read_sha256sums(os.path.join(d, "SHA256SUMS"))
         artifacts = {}
         for name in sorted(os.listdir(d)):
             p = os.path.join(d, name)
             if not os.path.isfile(p) or name == "SHA256SUMS":
                 continue
-            artifacts[name] = {"size": os.path.getsize(p),
-                               "sha256": sums.get(name)}
+            digest = _digest_file(p)
+            claimed = sums.get(name)
+            if claimed is not None and claimed != digest:
+                raise ExportError(
+                    "%s/%s: SHA256SUMS says %s but the file hashes to %s"
+                    % (label, name, claimed, digest))
+            artifacts[name] = {"size": os.path.getsize(p), "sha256": digest}
 
         receipt_path = os.path.join(d, "publication-receipt.json")
         receipt = None
         if os.path.exists(receipt_path):
             with open(receipt_path) as f:
                 receipt = json.load(f)
+            if receipt.get("merkle_root") != doc["merkle_root"]:
+                raise ExportError(
+                    "%s: publication receipt claims merkle_root %s but the "
+                    "measurement document says %s"
+                    % (label, receipt.get("merkle_root"), doc["merkle_root"]))
 
         builds.append({
             "label": label,
@@ -163,6 +213,26 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
     if not history:
         raise ExportError("no signed tree head in %s — start log_server.py "
                           "once, or publish, before exporting" % store_dir)
+
+    # The head to publish is the largest, not whichever line happens to be
+    # last: reordering sth-history.jsonl must not change what gets exported.
+    current = max(history, key=lambda h: h["tree_size"])
+
+    # Everything past the signed head is covered by no signature. Shipping
+    # such a record would let anyone with write access to the log store —
+    # a CI runner, a bad merge, a stale file — make an unpublished package
+    # look published, with no key involved. Refuse rather than truncate: a
+    # store larger than its own head is a fault, not a detail to paper over.
+    if len(entries) > current["tree_size"]:
+        raise ExportError(
+            "log store holds %d entries but the newest signed head covers "
+            "only %d — the surplus records are signed by nothing"
+            % (len(entries), current["tree_size"]))
+    if len(entries) < current["tree_size"]:
+        raise ExportError(
+            "the newest signed head covers %d entries but the log store "
+            "holds only %d — it does not match the log store"
+            % (current["tree_size"], len(entries)))
 
     # --- re-derive the log ------------------------------------------------
     leaves, leaf_hashes, by_leaf_hash = [], [], {}
@@ -196,7 +266,6 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
         if not merkle.verify_sth(pub, head):
             raise ExportError("tree head at size %d has a bad signature"
                               % head["tree_size"])
-    current = history[-1]
     key_id, pub_raw_hex = _key_id(pub_path)
 
     # --- builds -----------------------------------------------------------
@@ -215,9 +284,17 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
                 indices.append(idx)
         b["member_indices"] = sorted(indices)
         b["unpublished_count"] = missing
-        # A build counts as published only when every one of its packages has
-        # a log entry. Image B, by design, never will.
-        b["status"] = "published" if missing == 0 else "unpublished"
+        # Deliberately NOT called "published". A log-leaf-v1 leaf commits to a
+        # package -- name, version, arch, image line, file digests -- and
+        # carries no merkle_root, so nothing in the log attests an image as a
+        # whole. All this can honestly say is whether every constituent
+        # package appears in the log for this image line; an image assembled
+        # entirely from already-published packages (a downgrade, for instance)
+        # would satisfy it. Attesting the image itself needs a leaf that binds
+        # the device root, which this schema does not yet have.
+        b["status"] = ("all-packages-published" if missing == 0
+                       else "packages-missing")
+        b["image_attested"] = False
 
     # --- write ------------------------------------------------------------
     if os.path.exists(out_dir):
@@ -270,7 +347,7 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
             {k: b[k] for k in
              ("label", "build_id", "image_line", "machine", "version",
               "built_at", "device_root", "pcr14", "package_count",
-              "file_count", "status", "unpublished_count")}
+              "file_count", "status", "unpublished_count", "image_attested")}
             for b in builds])
 
     for b in builds:
@@ -284,7 +361,8 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
                 ("label", "build_id", "image_line", "machine", "version",
                  "built_at", "device_root", "pcr14", "package_count",
                  "file_count", "status", "unpublished_count",
-                 "member_indices", "artifacts", "receipt")})
+                 "image_attested", "member_indices", "artifacts",
+                 "receipt")})
 
         rel = "data/pkgs-%s.js" % root[:16]
         written[rel] = _js(
@@ -304,6 +382,16 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
     with open(os.path.join(out_dir, ".nojekyll"), "w") as f:
         f.write("")
 
+    # Ship the material a reader needs to re-check the head without this page
+    # or any server: the public key (a public key — safe to publish) and the
+    # head as plain JSON.
+    shutil.copy2(pub_path, os.path.join(out_dir, "log_ed25519.pub"))
+    with open(os.path.join(out_dir, "sth.json"), "w", newline="\n") as f:
+        json.dump({k: current[k] for k in
+                   ("tree_size", "root_hash", "timestamp", "signature")},
+                  f, indent=1, sort_keys=True)
+        f.write("\n")
+
     snapshot_txt = (
         "pkgattest site snapshot\n"
         "=======================\n\n"
@@ -319,9 +407,19 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
         "  key_id      %s\n"
         "  records     %d\n"
         "  builds      %d\n\n"
-        "Verify independently, without this page:\n"
-        "  pkgattest verify-sth --sth-file <(...)\n"
-        "  pkgattest verify-package <name>\n"
+        "Re-check the head yourself, offline, without this page:\n\n"
+        "  pkgattest verify-sth --sth-file sth.json \\\n"
+        "                       --log-pub log_ed25519.pub\n\n"
+        "That proves the head is signed by the key in this directory. It\n"
+        "does NOT prove that key is the log's: compare key_id above against\n"
+        "a value you obtained elsewhere.\n\n"
+        "What a log entry does and does not say\n"
+        "--------------------------------------\n"
+        "Each entry commits to one PACKAGE (name, version, architecture,\n"
+        "image line, and the digest of its file list). No entry commits to\n"
+        "an image, so 'every package is published' does not mean anyone\n"
+        "published this image -- an image built only from already-published\n"
+        "packages, including a downgrade, would also satisfy it.\n"
         % (SCHEMA, snapshot_id, current["tree_size"], current["root_hash"],
            current["timestamp"], current["signature"], key_id, len(leaves),
            len(builds)))
