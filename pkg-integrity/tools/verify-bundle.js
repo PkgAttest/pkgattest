@@ -275,6 +275,32 @@ for (const b of D.builds) {
     }
   });
 
+  // member_indices is shipped as this build's claimed footprint in the log,
+  // and a detail page will render it. Every index must land inside the signed
+  // prefix and name a leaf this build actually contains -- otherwise a build
+  // could claim membership it does not have.
+  if (detail && Array.isArray(detail.member_indices)) {
+    const mine = new Set(pkgs.map((row, i) => V.hex(V.leafHash(V.logLeafData({
+      arch: row[2], image_line: b.image_line, name: row[0], version: row[1],
+      pkg_leaf_hash: leafHexes[i],
+    })))));
+    const bad = detail.member_indices.filter(function (idx) {
+      if (!Number.isSafeInteger(idx) || idx < 0 || idx >= snap.tree_size) {
+        return true;
+      }
+      return !mine.has(V.hex(signedLeaves[idx]));
+    });
+    if (bad.length) {
+      problems.push(`${b.label}: ${bad.length} of ` +
+                    `${detail.member_indices.length} member_indices do not ` +
+                    `name a leaf of this build inside the signed head ` +
+                    `(first: ${bad[0]})`);
+    } else {
+      note(`all ${detail.member_indices.length} claimed log indices resolve ` +
+           `to this build's own leaves`);
+    }
+  }
+
   const pcr = V.expectedPcr14(b.device_root);
   if (pcr !== b.pcr14) problems.push(`${b.label}: PCR14 mismatch`);
   if (unaccounted.length !== b.unpublished_count) {

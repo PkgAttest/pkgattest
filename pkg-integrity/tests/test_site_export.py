@@ -581,6 +581,30 @@ def test_key_id_matches_the_cli_fingerprint(tmp_path):
 
 
 @pytest.mark.skipif(NODE is None, reason="node not present")
+def test_forged_member_indices_are_caught(tmp_path):
+    """member_indices is a build's claimed footprint in the log, and a detail
+    page will render it. Each index must land inside the signed head AND name
+    a leaf this build actually contains."""
+    base, _ = _fixture_tree(tmp_path)
+    out = tmp_path / "dist"
+    _export(base, out)
+    tool = os.path.join(BASE, "tools", "verify-bundle.js")
+
+    ok = subprocess.run([NODE, tool, str(out)], capture_output=True,
+                        text=True, timeout=300)
+    assert ok.returncode == 0
+    assert "claimed log indices resolve" in ok.stdout
+
+    # An index past the signed head, and one naming somebody else's leaf.
+    _patch_data(out / "data" / "builds" / "A.js", "build_A",
+                lambda b: dict(b, member_indices=[0, 99999]))
+    bad = subprocess.run([NODE, tool, str(out)], capture_output=True,
+                         text=True, timeout=300)
+    assert bad.returncode == 1
+    assert "member_indices do not name a leaf" in bad.stdout
+
+
+@pytest.mark.skipif(NODE is None, reason="node not present")
 def test_browser_path_rejects_a_tampered_bundle(tmp_path):
     """A bundle whose leaves were altered must fail, not silently re-root."""
     base, _ = _fixture_tree(tmp_path)
