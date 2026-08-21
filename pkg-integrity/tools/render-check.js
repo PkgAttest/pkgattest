@@ -33,6 +33,13 @@ function makeNode(tag) {
     className: '',
     children: [],
     _text: null,
+    attrs: {},
+    listeners: {},
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    getAttribute(k) { return this.attrs[k]; },
+    addEventListener(ev, fn) {
+      (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+    },
     style: new Proxy({}, {
       set() { throw new Error('app.js set an inline style; the CSP forbids it'); }
     }),

@@ -300,3 +300,188 @@ h2 {
     to { opacity: 1; transform: none; }
   }
 }
+
+/* --------------------------------------------------------------- verdicts */
+.verdict {
+  font-family: var(--sans);
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: -1.5rem 0 2.5rem;
+}
+.verdict.is-ok { color: var(--ok); }
+.verdict.is-absent { color: var(--absent); }
+
+.thesis.unknown { color: var(--muted); }
+
+/* ------------------------------------------------------------ raw evidence */
+/* The actual bytes. Shown because "trust me, I hashed something" is not a
+   claim anybody can check. */
+.bytes {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  padding: 1.1rem 1.3rem;
+  margin: 1rem 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  color: var(--text);
+}
+
+.proofline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+  padding: 0.9rem 0 0.2rem;
+}
+.proofline-op { color: var(--muted); font-size: 0.95rem; }
+.proofline .is-ok { color: var(--ok); }
+.proofline .is-absent { color: var(--absent); }
+
+/* ------------------------------------------------------------------ ladder */
+/* One row per level of the fold. The direction is printed per row rather than
+   as a single formula: RFC 6962 alternates, and the odd-tree case fires at
+   this size. Intermediates are abbreviated -- they are working values; the
+   root at the bottom is whole, because that is the value being checked. */
+.ladder {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--computed);
+  padding: 1.25rem 1.5rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+}
+.ladder-row {
+  display: grid;
+  grid-template-columns: 3.5rem 15rem 1fr;
+  gap: 0.35rem 1.25rem;
+  align-items: baseline;
+  padding: 0.3rem 0;
+  font-size: 0.98rem;
+}
+.ladder-row.is-head { color: var(--text); }
+.ladder-level { color: var(--muted); font-size: 0.85rem; }
+.ladder-value { color: var(--computed); }
+.ladder-op { color: var(--muted); font-size: 0.9rem; }
+
+.ladder-foot {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr;
+  gap: 1.25rem;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+.ladder-verdict { margin-top: 0.5rem; }
+.ladder-foot.is-ok .ladder-verdict { color: var(--ok); }
+.ladder-foot.is-absent .ladder-verdict { color: var(--absent); }
+
+/* ------------------------------------------------------------- lookup hits */
+.hit {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.5rem 1.5rem;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.hit-kind {
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.hit-body { min-width: 0; }
+.hit-note {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-top: 0.35rem;
+  max-width: 62ch;
+}
+.hit-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: var(--computed);
+  font-size: 0.95rem;
+}
+
+/* -------------------------------------------------------------- file lists */
+.filelist { margin: 0.75rem 0 0; }
+.filerow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.3rem 1.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted var(--line);
+  font-size: 0.95rem;
+  color: var(--text);
+  text-decoration: none;
+}
+a.filerow:hover, .filerow a:hover { color: var(--computed); }
+.filepath { word-break: break-all; color: inherit; }
+.filehash { color: var(--muted); white-space: nowrap; }
+
+/* ------------------------------------------------------------------- stats */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.5rem;
+  margin: 1.25rem 0 0;
+}
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1.25rem 1.4rem;
+}
+.stat-value {
+  font-size: 1.5rem;
+  color: var(--computed);
+  line-height: 1.2;
+}
+.stat-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 0.4rem;
+}
+.stat .prose { font-size: 0.95rem; margin: 0.6rem 0 0; }
+
+/* ------------------------------------------------------------------ search */
+.search { margin: 1.25rem 0 2.5rem; }
+.search-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-bottom: 0.6rem;
+}
+.search-line { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.search-input {
+  flex: 1 1 24rem;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05rem;
+  padding: 0.7rem 0.9rem;
+}
+.search-input:focus-visible { outline: 2px solid var(--computed); }
+.search-go {
+  background: transparent;
+  border: 1px solid var(--computed);
+  color: var(--computed);
+  font: inherit;
+  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+  cursor: pointer;
+}
+.search-go:hover { background: var(--computed); color: var(--ground); }
+
+@media (max-width: 40rem) {
+  .hit, .ladder-row, .ladder-foot { grid-template-columns: 1fr; }
+  .ladder-row { padding: 0.6rem 0; border-bottom: 1px dotted var(--line); }
+}

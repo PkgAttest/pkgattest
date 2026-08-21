@@ -113,10 +113,31 @@ verified — the key's authenticity, the currency of the tree head, and the
 fact that a log entry commits to a package and never to an image. Those four
 limits get their own page at `#/limits`.
 
-Current bundle: **120 KB gzipped** for everything needed before the first
-verdict (leaves, tree heads, the verifier and the crypto); package file lists
-load lazily per build. Rebuilding the whole 2132-leaf tree in the browser
-takes about 20 ms.
+Current cost of a first visit, gzipped:
+
+| | |
+|---|---|
+| page, verifier and vendored crypto | 34 KB |
+| the log's 2,132 records | 104 KB |
+| **tree verification total** | **135 KB** |
+| per-build package detail (6 files) | 864 KB |
+| **everything the landing page loads** | **999 KB** |
+
+Rebuilding the whole 2132-leaf tree in the browser takes about 20 ms.
+
+That last number is larger than it should be, and it is a real cost for
+someone scanning a QR code on a phone. The cause is honest rather than
+accidental: the landing page's headline — *N of 2,131 unaccounted for* — is
+recomputed, which means re-deriving every package's leaf hash from its file
+list, which needs the file lists for every build. Using the `leaf_hash` the
+bundle already states would drop it to 135 KB and make the headline an
+assertion instead of a computation, which is the trade this project exists to
+refuse.
+
+The fix is deduplication, not assertion: builds A and C differ by one
+package, so their file lists are ~99.95% identical and are currently shipped
+three times over. Content-addressing the per-package file lists would collapse
+864 KB to roughly 200 KB with no loss of what is verified. Not done yet.
 
 `make site-check` output is the demo, derived rather than asserted:
 

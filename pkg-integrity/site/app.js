@@ -110,11 +110,52 @@
     for (var i = 0; i < snap.tree_size; i++) {
       byLeafHash[V.hex(leafHashes[i])] = i;
     }
+    out.byLeafHash = byLeafHash;
+
+    /* The lookup index. Every entry is keyed by a hash this browser derived,
+     * except the two -- device roots and tree-head roots -- that the bundle
+     * states and the page recomputes elsewhere.
+     *
+     * Internal tree nodes are deliberately absent: a node hash is only
+     * meaningful at one tree size, so an old one would resolve to nothing and
+     * read as a bug rather than as the tree-size-scoped value it is. They
+     * appear inside a proof ladder, where their size is on screen. */
+    var index = { logLeaf: {}, pkgLeaf: {}, deviceRoot: {}, sthRoot: {},
+                  file: {}, pcr14: {}, artifact: {} };
+
+    function add(map, key, value) {
+      if (!key) return;
+      (map[key] = map[key] || []).push(value);
+    }
+
+    D.leaves.forEach(function (leafStr, i) {
+      if (i >= snap.tree_size) return;   // beyond the signature
+      var rec = JSON.parse(leafStr);
+      add(index.logLeaf, V.hex(leafHashes[i]), { index: i, rec: rec });
+      add(index.pkgLeaf, rec.pkg_leaf_hash, { index: i, rec: rec });
+    });
+
+    (D.sth_history || []).forEach(function (h) {
+      add(index.sthRoot, h.root_hash, h);
+    });
+    add(index.sthRoot, V.hex(V.EMPTY_TREE_ROOT), { tree_size: 0, genesis: true });
+
     out.builds = (D.builds || []).map(function (b) {
       var short = b.device_root.slice(0, 16);
       var pkgs = D['pkgs_' + short];
       var files = D['files_' + short];
-      var result = { meta: b, unaccounted: null, deviceRootOk: null };
+      var result = { meta: b, unaccounted: null, deviceRootOk: null,
+                     pkgs: null, filesByName: null, leafHexes: null };
+
+      add(index.deviceRoot, b.device_root, b);
+      add(index.pcr14, b.pcr14, b);
+      Object.keys(b.artifacts || {}).forEach(function (name) {
+        var a = b.artifacts[name];
+        if (a && a.sha256) {
+          add(index.artifact, a.sha256, { build: b, name: name, meta: a });
+        }
+      });
+
       if (!pkgs || !files) return result;    // detail not loaded yet
 
       var filesByName = {};
@@ -129,6 +170,9 @@
         });
       });
       result.deviceRootOk = (V.deviceRoot(leafHexes) === b.device_root);
+      result.pkgs = pkgs;
+      result.filesByName = filesByName;
+      result.leafHexes = leafHexes;
 
       var missing = [];
       pkgs.forEach(function (row, idx) {
@@ -136,15 +180,127 @@
           arch: row[2], image_line: b.image_line, name: row[0],
           version: row[1], pkg_leaf_hash: leafHexes[idx]
         });
-        if (!(V.hex(V.leafHash(data)) in byLeafHash)) {
-          missing.push({ name: row[0], version: row[1] });
-        }
+        var inLog = V.hex(V.leafHash(data)) in byLeafHash;
+        if (!inLog) missing.push({ name: row[0], version: row[1] });
+        add(index.pkgLeaf, leafHexes[idx],
+            { build: b, pkgIndex: idx, row: row, inLog: inLog });
+        (filesByName[row[0]] || []).forEach(function (f) {
+          add(index.file, f[1], { build: b, pkg: row[0], path: f[0] });
+        });
       });
       result.unaccounted = missing;
       return result;
     });
 
+    out.index = index;
     return out;
+  }
+
+  // ----------------------------------------------------------------- lookup
+  /* Never reject input. The most natural thing a reader types is a package
+   * name; the second is a log index. Demanding 64 hex would be a
+   * discoverability bug on the one control the whole page exists for. */
+  function normalise(raw) {
+    return String(raw || '').trim().toLowerCase()
+      .replace(/^0x/, '').replace(/[\s:]/g, '');
+  }
+
+  function lookup(r, raw) {
+    var q = normalise(raw);
+    var hits = [];
+    if (!q) return { query: raw, kind: 'empty', hits: hits };
+
+    var isHex = /^[0-9a-f]+$/.test(q);
+
+    if (isHex && q.length === 64) {
+      collectHashHits(r, q, q, hits);
+      return { query: raw, norm: q, kind: 'hash', hits: hits };
+    }
+
+    if (isHex && q.length >= 12 && q.length < 64) {
+      var full = prefixMatches(r, q);
+      if (full.length === 1) {
+        collectHashHits(r, full[0], q, hits);
+        return { query: raw, norm: full[0], kind: 'hash', prefix: q,
+                 hits: hits };
+      }
+      return { query: raw, norm: q, kind: 'ambiguous', candidates: full };
+    }
+
+    if (/^\d+$/.test(q)) {
+      var i = parseInt(q, 10);
+      if (i < r.snapshot.tree_size) {
+        var rec = JSON.parse(D.leaves[i]);
+        hits.push({ kind: 'log-index', index: i, rec: rec,
+                    leafHash: V.hex(r.leafHashes[i]) });
+        return { query: raw, kind: 'index', hits: hits };
+      }
+    }
+
+    // A path, or a package name. Both are substring searches over data the
+    // page already holds.
+    var needle = String(raw).trim().toLowerCase();
+    var names = {}, paths = [];
+    r.builds.forEach(function (b) {
+      if (!b.pkgs) return;
+      b.pkgs.forEach(function (row, idx) {
+        if (row[0].toLowerCase().indexOf(needle) >= 0) {
+          names[row[0]] = true;
+        }
+        if (needle.indexOf('/') >= 0) {
+          (b.filesByName[row[0]] || []).forEach(function (f) {
+            if (paths.length < 60 && f[0].toLowerCase().indexOf(needle) >= 0) {
+              paths.push({ build: b.meta, pkg: row[0], path: f[0],
+                           sha256: f[1] });
+            }
+          });
+        }
+      });
+    });
+    return { query: raw, kind: 'search',
+             names: Object.keys(names).sort(), paths: paths };
+  }
+
+  function prefixMatches(r, prefix) {
+    var seen = {};
+    ['logLeaf', 'pkgLeaf', 'deviceRoot', 'sthRoot', 'file', 'pcr14',
+     'artifact'].forEach(function (ns) {
+      Object.keys(r.index[ns]).forEach(function (h) {
+        if (h.indexOf(prefix) === 0) seen[h] = true;
+      });
+    });
+    return Object.keys(seen).sort();
+  }
+
+  /* Report EVERY namespace a hash matches, never the first. The empty file's
+   * digest is also the RFC 6962 empty-tree root, and a reader who is shown
+   * only one of those has been told something misleading. */
+  function collectHashHits(r, hex, typed, hits) {
+    (r.index.logLeaf[hex] || []).forEach(function (h) {
+      hits.push({ kind: 'log-leaf', index: h.index, rec: h.rec,
+                  leafHash: hex });
+    });
+    (r.index.pkgLeaf[hex] || []).forEach(function (h) {
+      if (h.rec) hits.push({ kind: 'pkg-leaf-published', rec: h.rec });
+      else hits.push({ kind: 'pkg-leaf', build: h.build, row: h.row,
+                       inLog: h.inLog, pkgLeafHash: hex });
+    });
+    (r.index.deviceRoot[hex] || []).forEach(function (b) {
+      hits.push({ kind: 'device-root', build: b });
+    });
+    (r.index.sthRoot[hex] || []).forEach(function (h) {
+      hits.push({ kind: 'sth-root', head: h });
+    });
+    (r.index.file[hex] || []).forEach(function (f) {
+      hits.push({ kind: 'file', file: f });
+    });
+    (r.index.pcr14[hex] || []).forEach(function (b) {
+      hits.push({ kind: 'pcr14', build: b });
+    });
+    (r.index.artifact[hex] || []).forEach(function (a) {
+      hits.push({ kind: 'artifact', artifact: a });
+    });
+    return hits;
   }
 
   // ---------------------------------------------------------------- renders
@@ -271,12 +427,25 @@
     box.appendChild(cmd);
     view.appendChild(box);
 
+    // ---- look anything up ----
+    view.appendChild(el('h2', null, 'Check something yourself'));
+    view.appendChild(el('p', 'prose dim',
+      'Every record, measurement, device root and file digest in this ' +
+      'snapshot is searchable. A hash may mean more than one thing; all of ' +
+      'them are shown.'));
+    view.appendChild(searchBox(''));
+
     var more = el('p', 'prose');
     var link = el('a', null, 'What this does not prove');
     link.href = '#/limits';
     more.appendChild(link);
     more.appendChild(document.createTextNode(
-      ' \u2014 the four things this page cannot tell you.'));
+      ' \u2014 the four things this page cannot tell you. '));
+    var slink = el('a', null, 'Statistics');
+    slink.href = '#/stats';
+    more.appendChild(slink);
+    more.appendChild(document.createTextNode(
+      ' \u2014 coverage, and where the weight actually is.'));
     view.appendChild(more);
   }
 
@@ -334,13 +503,522 @@
     view.appendChild(back);
   }
 
+  // --------------------------------------------------------- proof rendering
+  /* The fold-up ladder. Each row is one level: the value carried up, the
+   * sibling it joins, and which side it joins on -- printed per row rather
+   * than as one formula, because RFC 6962 alternates and the fn === sn case
+   * fires on a tree this size.
+   *
+   * Intermediates are shown abbreviated; they are working values. The final
+   * root is shown whole, because that is the value being checked. */
+  function ladder(leafHash, index, size, proof, rootHex) {
+    var box = el('div', 'ladder');
+    var steps = V.inclusionSteps(index, size, proof);
+    var cur = leafHash;
+
+    var head = el('div', 'ladder-row is-head');
+    head.appendChild(el('div', 'ladder-level', 'leaf'));
+    head.appendChild(el('div', 'ladder-value', abbrev(V.hex(cur))));
+    head.appendChild(el('div', 'ladder-op', 'index ' + group(index)));
+    box.appendChild(head);
+
+    steps.forEach(function (s, i) {
+      cur = (s.side === 'left') ? V.nodeHash(s.sibling, cur)
+                                : V.nodeHash(cur, s.sibling);
+      var row = el('div', 'ladder-row');
+      row.appendChild(el('div', 'ladder-level', 'L' + (i + 1)));
+      row.appendChild(el('div', 'ladder-value', abbrev(V.hex(cur))));
+      row.appendChild(el('div', 'ladder-op',
+        (s.side === 'left' ? 'sibling on the left  ' : 'sibling on the right ')
+        + abbrev(V.hex(s.sibling))));
+      box.appendChild(row);
+    });
+
+    var ok = V.hex(cur) === rootHex;
+    var foot = el('div', 'ladder-foot' + (ok ? ' is-ok' : ' is-absent'));
+    foot.appendChild(el('div', 'ladder-level', 'root'));
+    var val = el('div');
+    val.appendChild(digest(V.hex(cur), true));
+    val.appendChild(el('div', 'ladder-verdict',
+      ok ? 'this is the root the tree head is signed over'
+         : 'this is NOT the signed root'));
+    foot.appendChild(val);
+    box.appendChild(foot);
+    return { node: box, ok: ok, steps: steps.length };
+  }
+
+  function abbrev(hex) {
+    return hex.slice(0, 8) + ' ' + hex.slice(8, 16) + '...';
+  }
+
+  // ------------------------------------------------------------ package view
+  function findPackage(r, name, wantBuild) {
+    var found = null;
+    r.builds.forEach(function (b) {
+      if (!b.pkgs || found) return;
+      if (wantBuild && b.meta.label !== wantBuild) return;
+      b.pkgs.forEach(function (row, idx) {
+        if (!found && row[0] === name) {
+          found = { build: b, row: row, idx: idx,
+                    pkgLeafHash: b.leafHexes[idx] };
+        }
+      });
+    });
+    return found;
+  }
+
+  function renderPkg(r, name, wantBuild) {
+    var snap = r.snapshot;
+    var p = findPackage(r, name, wantBuild);
+    clear(view);
+    if (!p) {
+      view.appendChild(el('p', 'eyebrow', 'package'));
+      view.appendChild(el('p', 'thesis', 'No package by that name.'));
+      view.appendChild(el('p', 'prose', 'Nothing called "' + name +
+        '" appears in any build in this snapshot.'));
+      view.appendChild(backLink());
+      return;
+    }
+
+    var b = p.build, row = p.row;
+    var files = (b.filesByName[name] || []).map(function (f) {
+      return { path: f[0], sha256: f[1] };
+    });
+    var pkg = { name: row[0], version: row[1], arch: row[2], files: files };
+
+    var preimage = V.pkgLeafPreimage(pkg);
+    var leafHex = V.hex(V.sha256(preimage));
+    var record = V.logLeafData({
+      arch: row[2], image_line: b.meta.image_line, name: row[0],
+      version: row[1], pkg_leaf_hash: leafHex
+    });
+    var recordHex = V.hex(V.leafHash(record));
+    var logIndex = r.byLeafHash[recordHex];
+    var inLog = logIndex !== undefined;
+
+    view.appendChild(el('p', 'eyebrow',
+      'package \u00b7 build ' + b.meta.label + ' \u00b7 ' + b.meta.image_line));
+    var title = el('p', 'thesis');
+    title.appendChild(document.createTextNode(row[0] + ' ' + row[1]));
+    view.appendChild(title);
+
+    var verdict = el('p', inLog ? 'verdict is-ok' : 'verdict is-absent');
+    verdict.textContent = inLog
+      ? 'Published \u2014 leaf ' + group(logIndex) + ' of ' +
+        group(snap.tree_size)
+      : 'Not present at tree size ' + group(snap.tree_size);
+    view.appendChild(verdict);
+
+    // --- 1. the preimage ---
+    view.appendChild(el('h2', null, 'One \u2014 what was measured'));
+    view.appendChild(el('p', 'prose dim',
+      'The pkg-leaf-v1 preimage: this package\'s identity and the digest of ' +
+      'every file it installs. ' + group(preimage.length) + ' bytes.'));
+    var pre = el('pre', 'bytes');
+    var text = new TextDecoder().decode(preimage);
+    var lines = text.split('\n');
+    pre.textContent = lines.length > 14
+      ? lines.slice(0, 8).join('\n') + '\n  ... ' +
+        group(lines.length - 12) + ' more file lines ...\n' +
+        lines.slice(-4).join('\n')
+      : text;
+    view.appendChild(pre);
+    var d1 = el('div', 'proofline');
+    d1.appendChild(el('span', 'proofline-op', 'sha256(preimage)'));
+    d1.appendChild(digest(leafHex, true));
+    view.appendChild(d1);
+
+    // --- 2. the log record ---
+    view.appendChild(el('h2', null, 'Two \u2014 the record the log commits to'));
+    view.appendChild(el('p', 'prose dim',
+      'log-leaf-v1: canonical JSON, exactly these bytes. It carries the ' +
+      'digest above, not the file list itself.'));
+    var rec = el('pre', 'bytes');
+    rec.textContent = new TextDecoder().decode(record);
+    view.appendChild(rec);
+    var d2 = el('div', 'proofline');
+    d2.appendChild(el('span', 'proofline-op', 'sha256(0x00 || record)'));
+    d2.appendChild(digest(recordHex, true));
+    view.appendChild(d2);
+
+    // --- 3. inclusion, or its absence ---
+    if (inLog) {
+      var proof = V.inclusionProof(r.leafHashes, logIndex, snap.tree_size);
+      var lad = ladder(r.leafHashes[logIndex], logIndex, snap.tree_size,
+                       proof, snap.root_hash);
+      view.appendChild(el('h2', null,
+        'Three \u2014 folding that record up to the root'));
+      view.appendChild(el('p', 'prose dim',
+        lad.steps + ' sibling hashes, derived here from the records this ' +
+        'page holds. The server was not asked for a proof.'));
+      view.appendChild(lad.node);
+
+      view.appendChild(el('h2', null, 'Four \u2014 the signature'));
+      var d4 = el('div', 'proofline');
+      d4.appendChild(el('span', 'proofline-op', 'Ed25519'));
+      d4.appendChild(el('span', r.sigOk ? 'is-ok' : 'is-absent',
+        r.sigOk ? 'valid over the tree head above' : 'INVALID'));
+      view.appendChild(d4);
+    } else {
+      view.appendChild(el('h2', null, 'Three \u2014 no such record'));
+      var absent = el('div', 'named');
+      absent.appendChild(el('div', null,
+        'No leaf in this log matches that record.'));
+      absent.appendChild(el('span', 'named-scope',
+        'Checked against all ' + group(snap.tree_size) + ' records the ' +
+        'signed head covers, for image line ' + b.meta.image_line + '. ' +
+        'That is a statement about this tree size, not about all time.'));
+      view.appendChild(absent);
+
+      var others = (r.index.pkgLeaf[leafHex] || []).length;
+      var published = [];
+      r.builds.forEach(function (ob) {
+        if (!ob.pkgs) return;
+        ob.pkgs.forEach(function (orow, oi) {
+          if (orow[0] === name && ob.meta.label !== b.meta.label) {
+            var od = V.logLeafData({
+              arch: orow[2], image_line: ob.meta.image_line, name: orow[0],
+              version: orow[1], pkg_leaf_hash: ob.leafHexes[oi]
+            });
+            if (V.hex(V.leafHash(od)) in r.byLeafHash) {
+              published.push(ob.meta.label + ': ' + orow[1]);
+            }
+          }
+        });
+      });
+      if (published.length) {
+        view.appendChild(el('p', 'prose',
+          'What is published for ' + name + ' on this image line: ' +
+          published.join(', ') + '.'));
+      }
+      void others;
+    }
+
+    view.appendChild(el('h2', null, 'Files measured'));
+    view.appendChild(el('p', 'prose dim', group(files.length) +
+      ' regular files. Every digest below is inside the preimage above.'));
+    var table = el('div', 'filelist');
+    files.slice(0, 40).forEach(function (f) {
+      var frow = el('div', 'filerow');
+      frow.appendChild(el('div', 'filepath', f.path));
+      frow.appendChild(el('div', 'filehash', f.sha256.slice(0, 16) + '...'));
+      table.appendChild(frow);
+    });
+    if (files.length > 40) {
+      table.appendChild(el('div', 'filerow',
+        'and ' + group(files.length - 40) + ' more'));
+    }
+    view.appendChild(table);
+    view.appendChild(backLink());
+  }
+
+  // --------------------------------------------------------------- hash view
+  function renderHash(r, raw) {
+    var res = lookup(r, raw);
+    clear(view);
+    view.appendChild(el('p', 'eyebrow', 'lookup'));
+
+    if (res.kind === 'empty') {
+      view.appendChild(el('p', 'thesis', 'Nothing to look up.'));
+      view.appendChild(searchBox(raw));
+      return;
+    }
+
+    if (res.kind === 'ambiguous') {
+      view.appendChild(el('p', 'thesis', 'That prefix matches ' +
+        res.candidates.length + ' hashes.'));
+      var list = el('div', 'filelist');
+      res.candidates.slice(0, 30).forEach(function (h) {
+        var a = el('a', 'filerow', h);
+        a.href = '#/hash/' + h;
+        list.appendChild(a);
+      });
+      view.appendChild(list);
+      view.appendChild(searchBox(raw));
+      return;
+    }
+
+    if (res.kind === 'search') {
+      view.appendChild(el('p', 'thesis',
+        res.names.length || res.paths.length
+          ? 'Found ' + (res.names.length + res.paths.length) + '.'
+          : 'No package or path matches that.'));
+      if (res.names.length) {
+        view.appendChild(el('h2', null, 'Packages'));
+        var pl = el('div', 'filelist');
+        res.names.slice(0, 60).forEach(function (n) {
+          var a = el('a', 'filerow', n);
+          a.href = '#/pkg/' + encodeURIComponent(n);
+          pl.appendChild(a);
+        });
+        view.appendChild(pl);
+      }
+      if (res.paths.length) {
+        view.appendChild(el('h2', null, 'Files'));
+        var fl = el('div', 'filelist');
+        res.paths.forEach(function (f) {
+          var frow = el('div', 'filerow');
+          var a = el('a', 'filepath', f.path);
+          a.href = '#/hash/' + f.sha256;
+          frow.appendChild(a);
+          frow.appendChild(el('div', 'filehash', f.pkg));
+          fl.appendChild(frow);
+        });
+        view.appendChild(fl);
+      }
+      view.appendChild(searchBox(raw));
+      return;
+    }
+
+    // A hash, or a log index.
+    if (!res.hits.length) {
+      view.appendChild(el('p', 'thesis unknown', 'Unknown value.'));
+      view.appendChild(el('div', 'digest', ''));
+      view.appendChild(digest(res.norm.length === 64 ? res.norm : res.norm,
+                              false));
+      view.appendChild(el('p', 'prose',
+        'This is not a log record, a package measurement, a device root, a ' +
+        'tree head, a measured file, a PCR value or an artifact digest in ' +
+        'this snapshot. That is different from a package whose version was ' +
+        'never published \u2014 this value is simply not here at all.'));
+      view.appendChild(el('p', 'prose dim',
+        'Internal tree nodes are not indexed: a node hash only means ' +
+        'anything at one tree size, so it is shown inside a proof ladder ' +
+        'rather than looked up on its own.'));
+      view.appendChild(searchBox(raw));
+      return;
+    }
+
+    view.appendChild(el('p', 'thesis',
+      res.hits.length === 1 ? 'One match.'
+                            : res.hits.length + ' matches, all shown.'));
+    if (res.hits.length > 1) {
+      view.appendChild(el('p', 'prose dim',
+        'A digest can mean more than one thing. Every namespace it appears ' +
+        'in is listed, never just the first.'));
+    }
+    res.hits.forEach(function (h) { view.appendChild(hitCard(r, h)); });
+    view.appendChild(searchBox(raw));
+  }
+
+  function hitCard(r, h) {
+    var card = el('div', 'hit');
+    var kind = el('div', 'hit-kind');
+    var body = el('div', 'hit-body');
+
+    if (h.kind === 'log-leaf' || h.kind === 'log-index') {
+      kind.textContent = 'log record';
+      body.appendChild(el('div', null,
+        h.rec.name + ' ' + h.rec.version + '  (' + h.rec.arch + ')'));
+      body.appendChild(el('div', 'hit-note',
+        'leaf ' + group(h.index) + ' of ' + group(r.snapshot.tree_size) +
+        ', image line ' + h.rec.image_line));
+      var a = el('a', 'hit-link', 'open the package and fold the proof');
+      a.href = '#/pkg/' + encodeURIComponent(h.rec.name);
+      body.appendChild(a);
+    } else if (h.kind === 'pkg-leaf-published') {
+      kind.textContent = 'package measurement';
+      body.appendChild(el('div', null,
+        h.rec.name + ' ' + h.rec.version + ' \u2014 committed to by a log ' +
+        'record'));
+    } else if (h.kind === 'pkg-leaf') {
+      kind.textContent = 'package measurement';
+      body.appendChild(el('div', null,
+        h.row[0] + ' ' + h.row[1] + '  in build ' + h.build.label));
+      body.appendChild(el('div', 'hit-note', h.inLog
+        ? 'this measurement has a log record'
+        : 'no log record for this measurement at this tree size'));
+      var pa = el('a', 'hit-link', 'open the package');
+      pa.href = '#/pkg/' + encodeURIComponent(h.row[0]);
+      body.appendChild(pa);
+    } else if (h.kind === 'device-root') {
+      kind.textContent = 'device root';
+      body.appendChild(el('div', null, 'build ' + h.build.label + ' \u2014 ' +
+        h.build.build_id));
+      body.appendChild(el('div', 'hit-note',
+        'the pkg-merkle-v1 root over all ' + group(h.build.package_count) +
+        ' package measurements; this is what a BMC extends into PCR 14'));
+    } else if (h.kind === 'sth-root') {
+      kind.textContent = 'signed tree head';
+      body.appendChild(el('div', null, h.head.genesis
+        ? 'the empty tree (size 0)'
+        : 'tree size ' + group(h.head.tree_size)));
+      if (h.head.genesis) {
+        body.appendChild(el('div', 'hit-note',
+          'sha256 of nothing at all \u2014 RFC 6962 defines the empty tree ' +
+          'this way, which is why an empty file has the same digest'));
+      }
+    } else if (h.kind === 'file') {
+      kind.textContent = 'measured file';
+      body.appendChild(el('div', 'filepath', h.file.path));
+      body.appendChild(el('div', 'hit-note',
+        'installed by ' + h.file.pkg + ' in build ' + h.file.build.label));
+      var fa = el('a', 'hit-link', 'open ' + h.file.pkg);
+      fa.href = '#/pkg/' + encodeURIComponent(h.file.pkg);
+      body.appendChild(fa);
+    } else if (h.kind === 'pcr14') {
+      kind.textContent = 'expected PCR 14';
+      body.appendChild(el('div', null, 'build ' + h.build.label));
+      body.appendChild(el('div', 'hit-note',
+        'sha256(0^32 || device root) \u2014 what a TPM would hold after one ' +
+        'extend. No quote is in this bundle, so this is the value to expect, ' +
+        'not one that was measured.'));
+    } else if (h.kind === 'artifact') {
+      kind.textContent = 'artifact';
+      body.appendChild(el('div', null, h.artifact.name));
+      body.appendChild(el('div', 'hit-note',
+        'build ' + h.artifact.build.label + ', ' +
+        group(h.artifact.meta.size) + ' bytes'));
+    }
+
+    card.appendChild(kind);
+    card.appendChild(body);
+    return card;
+  }
+
+  // -------------------------------------------------------------- stats view
+  function renderStats(r) {
+    var snap = r.snapshot;
+    clear(view);
+    view.appendChild(el('p', 'eyebrow', 'statistics'));
+    view.appendChild(el('p', 'thesis', 'What is in the log, and what is not.'));
+
+    var b0 = r.builds[0];
+    var pkgs = b0 && b0.pkgs ? b0.pkgs : [];
+    var arch = {}, zero = 0, kernel = 0, kernelFiles = 0, totalFiles = 0;
+    pkgs.forEach(function (row) {
+      arch[row[2]] = (arch[row[2]] || 0) + 1;
+      var n = row[4];
+      totalFiles += n;
+      if (n === 0) zero++;
+      if (row[0].indexOf('kernel-') === 0) { kernel++; kernelFiles += n; }
+    });
+
+    function stat(label, value, note) {
+      var s = el('div', 'stat');
+      s.appendChild(el('div', 'stat-value', value));
+      s.appendChild(el('div', 'stat-label', label));
+      if (note) s.appendChild(el('p', 'prose dim', note));
+      return s;
+    }
+
+    view.appendChild(el('h2', null, 'Publication coverage'));
+    var cov = el('div', 'stats');
+    r.builds.forEach(function (b) {
+      var missing = b.unaccounted ? b.unaccounted.length : 0;
+      cov.appendChild(stat('build ' + b.meta.label,
+        group(b.meta.package_count - missing) + ' / ' +
+        group(b.meta.package_count),
+        missing ? 'packages with a log record; ' + missing + ' without'
+                : 'every package has a log record'));
+    });
+    view.appendChild(cov);
+
+    view.appendChild(el('h2', null, 'Where the weight actually is'));
+    view.appendChild(el('p', 'prose',
+      'Kernel modules are ' + pct(kernel, pkgs.length) + ' of the packages ' +
+      'but only ' + pct(kernelFiles, totalFiles) + ' of the measured files. ' +
+      'Counting packages is not the same as measuring attack surface.'));
+    var w = el('div', 'stats');
+    w.appendChild(stat('kernel-* packages',
+      group(kernel) + ' / ' + group(pkgs.length)));
+    w.appendChild(stat('their share of files',
+      group(kernelFiles) + ' / ' + group(totalFiles)));
+    view.appendChild(w);
+
+    view.appendChild(el('h2', null, 'Packages that constrain nothing'));
+    view.appendChild(el('p', 'prose',
+      group(zero) + ' packages measure zero files. They are metapackages \u2014 ' +
+      'packagegroups and kernel-module aggregates \u2014 so each contributes a ' +
+      'leaf to the tree while committing to no bytes at all. Worth saying ' +
+      'plainly rather than letting the package count imply more coverage ' +
+      'than it has.'));
+
+    view.appendChild(el('h2', null, 'The log itself'));
+    var l = el('div', 'stats');
+    l.appendChild(stat('records', group(snap.tree_size)));
+    l.appendChild(stat('signed tree heads',
+      group((D.sth_history || []).length)));
+    l.appendChild(stat('architectures', String(Object.keys(arch).length),
+      Object.keys(arch).sort().map(function (a) {
+        return a + ' ' + group(arch[a]);
+      }).join(', ')));
+    view.appendChild(l);
+
+    view.appendChild(el('p', 'prose dim',
+      'Not shown: what fraction of the root filesystem is measured. The ' +
+      'denominator is not in this data, and inventing it would be the one ' +
+      'number on this page nobody could check.'));
+    view.appendChild(backLink());
+  }
+
+  function pct(a, b) {
+    return b ? (Math.round(a / b * 1000) / 10) + '%' : '0%';
+  }
+
+  // -------------------------------------------------------------- search box
+  function searchBox(value) {
+    var form = el('div', 'search');
+    var label = el('label', 'search-label',
+      'Paste a hash, a log index, a package name or a file path');
+    label.setAttribute('for', 'q');
+    var input = el('input', 'search-input');
+    input.id = 'q';
+    input.setAttribute('type', 'text');
+    input.setAttribute('spellcheck', 'false');
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('placeholder', 'dropbear');
+    if (value) input.value = value;
+    var go = el('button', 'search-go', 'Look it up');
+
+    function submit() {
+      var v = input.value;
+      if (v && v.trim()) location.hash = '#/hash/' + encodeURIComponent(v.trim());
+    }
+    go.addEventListener('click', submit);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') submit();
+    });
+
+    form.appendChild(label);
+    var line = el('div', 'search-line');
+    line.appendChild(input);
+    line.appendChild(go);
+    form.appendChild(line);
+    return form;
+  }
+
+  function backLink() {
+    var p = el('p', 'prose');
+    var a = el('a', null, 'Back to the verification');
+    a.href = '#/';
+    p.appendChild(a);
+    return p;
+  }
+
   // ----------------------------------------------------------------- router
   var verified = null;
 
   function route() {
     if (!verified) return;
-    if (location.hash === '#/limits') renderLimits(verified);
-    else renderHome(verified);
+    var hash = String(location.hash || '');
+    var m;
+    try {
+      if (hash === '#/limits') renderLimits(verified);
+      else if (hash === '#/stats') renderStats(verified);
+      else if ((m = hash.match(/^#\/hash\/(.*)$/))) {
+        renderHash(verified, decodeURIComponent(m[1]));
+      } else if ((m = hash.match(/^#\/pkg\/([^?]*)(?:\?build=([A-Za-z0-9._-]+))?$/))) {
+        renderPkg(verified, decodeURIComponent(m[1]), m[2] || null);
+      } else {
+        renderHome(verified);
+      }
+    } catch (e) {
+      // location.hash is attacker-controlled and survives being shared, so a
+      // malformed one must land on a page, not on a broken render.
+      renderBlocked('That link could not be read',
+                    [e && e.message ? e.message : String(e)]);
+    }
     window.scrollTo(0, 0);
   }
 
