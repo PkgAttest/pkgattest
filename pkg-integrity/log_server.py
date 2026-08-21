@@ -37,7 +37,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pkgintegrity import merkle  # noqa: E402
@@ -267,6 +267,7 @@ class Handler(BaseHTTPRequestHandler):
     # Set by main(); tests drive the Handler directly and keep the defaults.
     writable = True
     auth_token = None
+    site_dir = None
 
     def _json(self, code, obj):
         body = json.dumps(obj, indent=1).encode()
@@ -358,8 +359,60 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+        elif self.site_dir and (url.path == "/site" or
+                                url.path.startswith("/site/")):
+            self._serve_static(url.path[len("/site"):])
         else:
             self._json(404, {"error": "unknown path"})
+
+    # -- static bundle ----------------------------------------------------
+    # Mounted under /site/ rather than at the root so GET / keeps serving the
+    # plain-text page, which demo/frames/sth-qr.png already points at. Off
+    # unless --site is given: this process holds the log's signing key, and
+    # http.server has no business serving files it was not asked to.
+
+    MIME = {".html": "text/html; charset=utf-8",
+            ".js": "application/javascript; charset=utf-8",
+            ".css": "text/css; charset=utf-8",
+            ".json": "application/json",
+            ".txt": "text/plain; charset=utf-8",
+            ".pub": "text/plain; charset=utf-8",
+            ".png": "image/png",
+            ".svg": "image/svg+xml"}
+
+    def _serve_static(self, rel):
+        root = os.path.realpath(self.site_dir)
+        rel = unquote(rel or "/")
+        if rel in ("", "/"):
+            rel = "/index.html"
+        if "\0" in rel:
+            return self._json(400, {"error": "bad path"})
+
+        # Resolve, then confirm the result is still inside the root. Checking
+        # for ".." before decoding would miss %2e%2e, and checking the string
+        # instead of the resolved path would miss a symlink pointing out.
+        target = os.path.realpath(os.path.join(root, rel.lstrip("/")))
+        if target != root and not target.startswith(root + os.sep):
+            return self._json(403, {"error": "outside the site directory"})
+        if os.path.isdir(target):
+            return self._json(403, {"error": "no directory listing"})
+        if not os.path.isfile(target):
+            return self._json(404, {"error": "not found"})
+
+        try:
+            with open(target, "rb") as f:
+                body = f.read()
+        except OSError:
+            return self._json(404, {"error": "not found"})
+
+        ctype = self.MIME.get(os.path.splitext(target)[1],
+                              "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         url = urlparse(self.path)
@@ -411,12 +464,21 @@ def main():
                                                   "log_ed25519.pub"))
     ap.add_argument("--writable", action="store_true",
                     help="allow POST /entries (off by default)")
+    ap.add_argument("--site", default=None, metavar="DIR",
+                    help="also serve a static site bundle under /site/ "
+                         "(off by default)")
     ap.add_argument("--token-file", default=None,
                     help="file holding a bearer token required for writes "
                          "(never pass a token in argv — ps is public)")
     args = ap.parse_args()
 
     Handler.writable = args.writable
+    if args.site:
+        if not os.path.isdir(args.site):
+            print("pkg-log: --site %s is not a directory" % args.site,
+                  file=sys.stderr)
+            return 2
+        Handler.site_dir = os.path.realpath(args.site)
     if args.token_file:
         with open(args.token_file) as f:
             Handler.auth_token = f.read().strip()
@@ -431,6 +493,8 @@ def main():
           % (LOG.tree.size, LOG.tree.root().hex()[:16], LOG.sth["timestamp"],
              LOG.key_id[:14], "writable" if args.writable else "read-only",
              args.bind, args.port), flush=True)
+    if Handler.site_dir:
+        print("pkg-log: serving %s at /site/" % Handler.site_dir, flush=True)
     ThreadingHTTPServer((args.bind, args.port), Handler).serve_forever()
     return 0
 

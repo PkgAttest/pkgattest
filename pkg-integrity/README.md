@@ -16,9 +16,9 @@ published. Demo plan: `../demo.md` (Demo A). Formats and trust model:
 | `verify.py` | thin wrapper for `pkgattest attest` (ssh collect → root/PCR/quote/inclusion-proof chain) |
 | `verify_image.py` | thin wrapper for `pkgattest verify-image` (Beat 1: mmc-tar signatures) |
 | `pyproject.toml` | installable `pkgattest` package (`make venv` does `pip install -e .`) |
-| `site/` | the static site: `verify.js` (browser-side verification core) and `vendor/pkgcrypto.js` (pinned, vendored sha256/sha512/ed25519) |
+| `site/` | the static site: `index.html`, `app.js`, `style.css`, `verify.js` (browser-side verification core) and `vendor/pkgcrypto.js` (pinned, vendored sha256/sha512/ed25519) |
 | `site-dist/` (gitignored) | generated bundle — `make site` |
-| `tools/` | `vendor_crypto.py` (build the vendored crypto), `parity.js` (JS vs Python), `verify-bundle.js` (check a bundle the way a browser does) |
+| `tools/` | `vendor_crypto.py` (build the vendored crypto), `parity.js` (JS vs Python), `verify-bundle.js` (check a bundle the way a browser does), `render-check.js` (run the page against a minimal DOM) |
 | `build-image.sh {A\|B\|C}` | build the demo images (B: dropbear 2026.91, never published; C: a later build giving the log a second tree head) |
 | `demo/` | per-beat frame scripts, env |
 | `sim/` | hardware-free path: synthetic evidence bundles, laptop swtpm, e2e |
@@ -86,11 +86,32 @@ endpoint that can lie.
 
 ```sh
 make site            # export the bundle
+make site-serve      # serve it at http://127.0.0.1:8799/site/
 make site-verify     # build twice and diff — the output is deterministic
 make site-check      # verify it the way a browser will (needs node)
 make check-vendor    # the vendored crypto matches its pinned upstream
 make parity          # verify.js vs the Python implementation
 ```
+
+The page opens straight from `site-dist/index.html` with no server at all.
+`log_server.py --site DIR` mounts a bundle under `/site/` — deliberately not
+at the root, so `GET /` keeps serving the plain-text page the demo's QR code
+already points at. Static serving is off unless `--site` is given: that
+process holds the log's signing key.
+
+### What the page does
+
+It runs `PKGI_VERIFY.selfTest()` before rendering anything. If a primitive
+fails a known-answer check, the page shows that and stops — a verdict drawn
+on top of arithmetic that failed is worse than no page. Then it rebuilds the
+tree from the records it shipped with, checks the Ed25519 signature, and
+reports the real measured timings rather than performing a progress bar.
+
+Typeface carries provenance: monospace is everything this browser computed,
+and the sans face appears only where somebody is asserting something nobody
+verified — the key's authenticity, the currency of the tree head, and the
+fact that a log entry commits to a package and never to an image. Those four
+limits get their own page at `#/limits`.
 
 Current bundle: **120 KB gzipped** for everything needed before the first
 verdict (leaves, tree heads, the verifier and the crypto); package file lists

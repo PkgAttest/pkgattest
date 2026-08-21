@@ -265,6 +265,85 @@ def test_reads_are_unauthenticated(server):
         assert json.load(r)["tree_size"] == 0
 
 
+# --------------------------------------------------------- static site branch
+@pytest.fixture
+def site_server(tmp_path, monkeypatch):
+    """The log server with a static bundle mounted, as `make site-serve`."""
+    site = tmp_path / "site"
+    (site / "data").mkdir(parents=True)
+    (site / "index.html").write_text("<!doctype html>hello")
+    (site / "data" / "snapshot.js").write_text("var x = 1;")
+    (site / "secret-ish.txt").write_text("inside the root")
+    (tmp_path / "outside.txt").write_text("NOT FOR SERVING")
+
+    monkeypatch.setattr(log_server.Handler, "site_dir",
+                        os.path.realpath(str(site)))
+    log_server.LOG = _open(str(tmp_path / "store"))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), log_server.Handler)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    yield "http://127.0.0.1:%d" % httpd.server_address[1], tmp_path
+    httpd.shutdown()
+
+
+def _get(url):
+    try:
+        with urllib.request.urlopen(url, timeout=10) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
+def test_site_branch_serves_the_bundle(site_server):
+    url, _ = site_server
+    assert _get(url + "/site/")[0] == 200
+    assert b"hello" in _get(url + "/site/index.html")[1]
+    assert _get(url + "/site/data/snapshot.js")[0] == 200
+
+
+def test_site_branch_leaves_the_plain_text_page_at_the_root(site_server):
+    """demo/frames/sth-qr.png already encodes the root URL, so mounting the
+    bundle must not take it over."""
+    url, _ = site_server
+    status, body = _get(url + "/")
+    assert status == 200
+    assert b"pkg-integrity transparency log" in body
+
+
+@pytest.mark.parametrize("attack", [
+    "/site/../outside.txt",
+    "/site/..%2foutside.txt",
+    "/site/%2e%2e/outside.txt",
+    "/site/data/../../outside.txt",
+    "/site/....//outside.txt",
+])
+def test_site_branch_refuses_traversal(site_server, attack):
+    """The signing key lives above any plausible site root."""
+    url, tmp_path = site_server
+    status, body = _get(url + attack)
+    assert status in (403, 404), attack
+    assert b"NOT FOR SERVING" not in body, attack
+
+
+def test_site_branch_refuses_directory_listing(site_server):
+    url, _ = site_server
+    assert _get(url + "/site/data/")[0] == 403
+
+
+def test_site_branch_is_off_unless_asked_for(tmp_path, monkeypatch):
+    """No --site, no static serving: this process holds the signing key."""
+    monkeypatch.setattr(log_server.Handler, "site_dir", None)
+    log_server.LOG = _open(str(tmp_path))
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), log_server.Handler)
+    t = threading.Thread(target=httpd.serve_forever, daemon=True)
+    t.start()
+    try:
+        url = "http://127.0.0.1:%d" % httpd.server_address[1]
+        assert _get(url + "/site/index.html")[0] == 404
+    finally:
+        httpd.shutdown()
+
+
 # -------------------------------------------------------------------- golden
 @pytest.mark.skipif(not os.path.exists(PROD_LOG),
                     reason="production log store not present")
