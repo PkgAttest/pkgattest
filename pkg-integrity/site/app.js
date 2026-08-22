@@ -1291,6 +1291,14 @@
       '  }\n' +
       '}';
     view.appendChild(prop);
+    var ilink = el('p', 'prose');
+    var ia = el('a', null, 'What a package update does to an assessment');
+    ia.href = '#/impact';
+    ilink.appendChild(ia);
+    ilink.appendChild(document.createTextNode(
+      ' \u2014 what carries across an image, and what does not.'));
+    view.appendChild(ilink);
+
     view.appendChild(el('p', 'prose dim',
       'This is an observation, not a submission. It has not been through an ' +
       'OCP Security Project call, no Security Review Provider has seen it, ' +
@@ -1298,6 +1306,246 @@
       'providers: it changes how the reviewed artefact is identified, not ' +
       'how a review is scoped or carried out \u2014 S.A.F.E. leaves review areas ' +
       'deliberately open, and this does not touch that.'));
+    view.appendChild(backLink());
+  }
+
+  // ------------------------------------------------------------- impact view
+  /* Compare the image an assessment names against another image, and report
+   * what moved.
+   *
+   * The one rule this must obey: it may only ever ESCALATE. It computes
+   * reasons to re-review; the absence of a reason is not clearance. Printing
+   * "minor change, assurance maintained" would be the tool doing the
+   * reviewer's job, and it is not equipped to. Common Criteria puts that
+   * classification in a human's hands for good reason -- see the note the
+   * page prints.
+   *
+   * What transfers and what does not:
+   *   - a finding about an artefact ("this build has CVE-X") is a property
+   *     of bytes, and follows an identical leaf hash exactly;
+   *   - an absence of findings is a property of the review effort, and
+   *     follows nothing at all. */
+  function impactAnalysis(an, subject, candidate) {
+    function index(b) {
+      var m = {};
+      if (b.pkgs) {
+        b.pkgs.forEach(function (row, i) {
+          m[row[0]] = { version: row[1], leaf: b.leafHexes[i] };
+        });
+      }
+      return m;
+    }
+    var S = index(subject), C = index(candidate);
+    var out = { subject: subject.meta, candidate: candidate.meta,
+                identical: 0, changed: [], added: [], removed: [],
+                reasons: [] };
+
+    Object.keys(C).forEach(function (name) {
+      var c = C[name], s = S[name];
+      if (!s) {
+        out.added.push({ name: name, version: c.version,
+                         reviewedArea: !!an.byName[name] });
+        return;
+      }
+      if (s.leaf === c.leaf) out.identical++;
+      else {
+        out.changed.push({ name: name, from: s.version, to: c.version,
+                           reviewedArea: !!an.byName[name] });
+      }
+    });
+    Object.keys(S).forEach(function (name) {
+      if (!C[name]) {
+        out.removed.push({ name: name, version: S[name].version,
+                           reviewedArea: !!an.byName[name] });
+      }
+    });
+
+    out.changed.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+
+    var reviewedChanged = out.changed.filter(function (p) {
+      return p.reviewedArea;
+    });
+    if (reviewedChanged.length) {
+      out.reasons.push({
+        kind: 'changed',
+        text: reviewedChanged.length + ' package' +
+              (reviewedChanged.length === 1 ? '' : 's') +
+              ' inside the reviewed area changed',
+        items: reviewedChanged.map(changeLabel)
+      });
+    }
+    if (out.added.length) {
+      out.reasons.push({
+        kind: 'added',
+        text: out.added.length + ' package' +
+              (out.added.length === 1 ? ' is' : 's are') +
+              ' present here and absent from the assessed image, so no ' +
+              'part of the review saw them',
+        items: out.added.slice(0, 10).map(function (p) {
+          return p.name + ' ' + p.version;
+        })
+      });
+    }
+    var reviewedGone = out.removed.filter(function (p) {
+      return p.reviewedArea;
+    });
+    if (reviewedGone.length) {
+      out.reasons.push({
+        kind: 'removed',
+        text: reviewedGone.length + ' package' +
+              (reviewedGone.length === 1 ? '' : 's') +
+              ' the review examined ' +
+              (reviewedGone.length === 1 ? 'is' : 'are') +
+              ' no longer present, so the composition it judged is gone',
+        items: reviewedGone.map(function (p) { return p.name; })
+      });
+    }
+    return out;
+  }
+
+  /* A version string is not an identity. When a package's measurement moved
+   * but its version did not, say so plainly -- that case is the whole reason
+   * this joins on the leaf hash instead of on name and version. */
+  function changeLabel(p) {
+    return p.from === p.to
+      ? p.name + '  ' + p.from + '  (same version, different measurement)'
+      : p.name + '  ' + p.from + ' -> ' + p.to;
+  }
+
+  function renderImpact(r) {
+    clear(view);
+    view.appendChild(el('p', 'eyebrow', 'impact analysis'));
+    view.appendChild(el('p', 'thesis',
+      'What a package update does to an assessment.'));
+
+    if (!r.assessments.length) {
+      view.appendChild(el('p', 'prose',
+        'No assessment scope is carried in this snapshot, so there is ' +
+        'nothing to compare against.'));
+      view.appendChild(backLink());
+      return;
+    }
+
+    view.appendChild(el('p', 'prose',
+      'An assessment is pinned to one image. Update a single package and, as ' +
+      'far as a firmware hash is concerned, the whole thing is a stranger. ' +
+      'Measuring packages separately lets you compute what actually moved \u2014 ' +
+      'and, just as importantly, be precise about what that does and does ' +
+      'not license you to conclude.'));
+
+    var split = el('div', 'keybox');
+    split.appendChild(el('p', 'prose',
+      'Two kinds of claim, and they behave differently. A finding about an ' +
+      'artefact \u2014 "this build contains CVE-2026-X" \u2014 is a property of bytes, ' +
+      'so it follows an identical measurement exactly. An absence of ' +
+      'findings \u2014 "the review found no issues" \u2014 is a property of the review ' +
+      'effort, and follows nothing. Identical measurements carry forward ' +
+      'what was found. They do not carry forward the fact that nothing else ' +
+      'was.'));
+    view.appendChild(split);
+
+    r.assessments.forEach(function (an) {
+      var subject = null;
+      r.builds.forEach(function (b) {
+        if (b.meta.device_root === an.doc.subject.device_root) subject = b;
+      });
+      if (!subject) return;
+
+      r.builds.forEach(function (cand) {
+        if (cand === subject || !cand.pkgs) return;
+        var im = impactAnalysis(an, subject, cand);
+
+        view.appendChild(el('h2', null,
+          'Assessed image ' + subject.meta.label + '  ->  image ' +
+          cand.meta.label));
+
+        var tally = el('div', 'stats');
+        function stat(v, l, note) {
+          var s = el('div', 'stat');
+          s.appendChild(el('div', 'stat-value', v));
+          s.appendChild(el('div', 'stat-label', l));
+          if (note) s.appendChild(el('p', 'prose dim', note));
+          return s;
+        }
+        tally.appendChild(stat(group(im.identical), 'identical measurements',
+          'Findings recorded against these exact bytes still apply.'));
+        tally.appendChild(stat(group(im.changed.length), 'changed',
+          'Nothing recorded about the old bytes says anything about these.'));
+        tally.appendChild(stat(group(im.added.length + im.removed.length),
+          'added or removed'));
+        view.appendChild(tally);
+
+        if (im.reasons.length) {
+          var box = el('div', 'caution');
+          box.appendChild(el('div', 'caution-head', 'Reasons to re-review'));
+          im.reasons.forEach(function (rs) {
+            box.appendChild(el('p', 'prose', rs.text + ':'));
+            var list = el('div', 'filelist');
+            rs.items.forEach(function (it) {
+              list.appendChild(el('div', 'filerow', it));
+            });
+            box.appendChild(list);
+          });
+          view.appendChild(box);
+        } else {
+          var none = el('div', 'keybox');
+          none.appendChild(el('div', 'build-verdict is-ok',
+            'No reason to re-review found in the reviewed area.'));
+          none.appendChild(el('p', 'prose',
+            'That is not clearance, and this page will not offer any. It ' +
+            'means this analysis found nothing, across the things it can ' +
+            'see. Whether the change is minor is a judgement, and it belongs ' +
+            'to a reviewer.'));
+          if (im.changed.length) {
+            none.appendChild(el('p', 'prose dim',
+              'What did change, outside the reviewed area: ' +
+              im.changed.map(changeLabel).join('; ') + '.'));
+          }
+          view.appendChild(none);
+        }
+      });
+    });
+
+    // ---- the limits of this analysis ----
+    view.appendChild(el('h2', null, 'What this analysis cannot see'));
+
+    var lim1 = el('div', 'limit');
+    lim1.appendChild(el('h3', null, 'Files that belong to no package'));
+    lim1.appendChild(el('p', 'prose',
+      '25 regular files in the built image are owned by no package at all, ' +
+      'so no measurement covers them and this comparison cannot include ' +
+      'them: 12 kernel module indexes written by depmod, 10 files assembled ' +
+      'during image composition \u2014 among them /etc/passwd, /etc/shadow and ' +
+      '/etc/ld.so.cache \u2014 and 3 written by the measurement pass itself. Two ' +
+      'images with identical package measurements can still differ in those. ' +
+      'The count comes from measuring the built root filesystem directly; it ' +
+      'is not derivable from this bundle.'));
+    view.appendChild(lim1);
+
+    var lim2 = el('div', 'limit');
+    lim2.appendChild(el('h3', null, 'Packages whose behaviour changed anyway'));
+    lim2.appendChild(el('p', 'prose',
+      'Update a shared library and every package linking it behaves ' +
+      'differently while its own bytes stay identical \u2014 so it counts as ' +
+      '"identical" above. Catching that needs the dependency graph, and the ' +
+      'measurement documents do not carry one yet. This is the largest hole ' +
+      'in the analysis and it is stated here rather than papered over.'));
+    view.appendChild(lim2);
+
+    var lim3 = el('div', 'limit');
+    lim3.appendChild(el('h3', null, 'The judgement itself'));
+    lim3.appendChild(el('p', 'prose',
+      'Common Criteria has had a process for this for years: under Assurance ' +
+      'Continuity a developer files an Impact Analysis Report and the change ' +
+      'is classified minor, keeping the certificate under maintenance, or ' +
+      'major, requiring re-evaluation. The classification is a human ' +
+      'decision. OCP S.A.F.E. defines no equivalent \u2014 no expiry, no cadence, ' +
+      'and nothing about how a report applies to a later version \u2014 so today ' +
+      'an update simply drops you to zero. What a page like this can ' +
+      'contribute is the input to that decision, stated exactly, instead of ' +
+      '"we rebuilt the image".'));
+    view.appendChild(lim3);
+
     view.appendChild(backLink());
   }
 
@@ -1432,6 +1680,7 @@
       if (hash === '#/limits') renderLimits(verified);
       else if (hash === '#/stats') renderStats(verified);
       else if (hash === '#/assessment') renderAssessment(verified);
+      else if (hash === '#/impact') renderImpact(verified);
       else if ((m = hash.match(/^#\/hash\/(.*)$/))) {
         renderHash(verified, decodeURIComponent(m[1]));
       } else if ((m = hash.match(/^#\/pkg\/([^?]*)(?:\?build=([A-Za-z0-9._-]+))?$/))) {

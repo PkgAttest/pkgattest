@@ -192,6 +192,33 @@ A firmware hash fails identically for B and C. Naming packages separates the
 change a review cares about from the one it does not — which is the same
 argument the log makes about publication, one layer up.
 
+`#/impact` takes the next step: what a package update does to an assessment.
+It reports what moved and, deliberately, **only ever escalates** — it computes
+reasons to re-review, and the absence of a reason is not clearance:
+
+| | |
+|---|---|
+| A → B | 2,130 identical, 1 changed — `dropbear`, inside the reviewed area → **reason to re-review** |
+| A → C | 2,130 identical, 1 changed — `os-release`, outside it → *no reason found, which is not the same as fine* |
+
+Two kinds of claim behave differently, and the page says so: a finding about
+an artefact ("this build contains CVE-X") is a property of bytes and follows
+an identical measurement exactly; an absence of findings is a property of the
+review effort and follows nothing. Identical measurements carry forward what
+was *found*, never the fact that nothing else was.
+
+Common Criteria has had a process for this for years — under Assurance
+Continuity a developer files an Impact Analysis Report and a human classifies
+the change as minor or major. OCP S.A.F.E. defines no equivalent, so today an
+update drops you to zero. The contribution here is the *input* to that
+decision, stated exactly, rather than "we rebuilt the image".
+
+Its blind spots are on the page rather than in a footnote: the 25 files no
+package owns, and — the largest — no dependency graph, so a shared-library
+update leaves its dependents counted as "identical". `pkgdata` has `RDEPENDS`
+and adding a `depends` field to the measurement document would not change any
+leaf hash, so a future build could close it without invalidating anything.
+
 **`assessments/example-scope1.json` is a worked example and nothing more.**
 No Security Review Provider has reviewed this image; no real SRP or vendor is
 named anywhere; the document is unsigned, carries its own schema name, and the

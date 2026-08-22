@@ -477,3 +477,67 @@ def test_package_page_states_where_it_sits_in_the_assessment(
     assert expect in out
     # The disclaimer travels with the claim, wherever it is shown.
     assert "not an OCP S.A.F.E. Short-Form Report" in out
+
+
+# ----------------------------------------------------------- the impact view
+@needs
+def test_impact_separates_what_transfers_from_what_does_not(bundle):
+    out = render(bundle, "--hash", "#/impact")
+    assert "property of bytes" in out
+    assert "property of the review effort, and follows nothing" in out
+    assert "do not carry forward the fact that nothing else was" in out
+
+
+@needs
+def test_impact_escalates_when_a_reviewed_package_changed(bundle):
+    """A -> B swaps dropbear, which the assessment examined."""
+    out = render(bundle, "--hash", "#/impact")
+    assert "Assessed image A  ->  image B" in out
+    assert "Reasons to re-review" in out
+    assert "1 package inside the reviewed area changed" in out
+    assert "dropbear  2026.92-r0 -> 2026.91-r0" in out
+    assert "2,130" in out                      # identical measurements
+
+
+@needs
+def test_impact_never_clears_a_build(bundle):
+    """A -> C changes only os-release, outside the reviewed area. The page
+    must report that it found nothing WITHOUT calling the change minor —
+    that classification belongs to a reviewer, as Common Criteria has it."""
+    out = render(bundle, "--hash", "#/impact")
+    assert "Assessed image A  ->  image C" in out
+    assert "No reason to re-review found in the reviewed area." in out
+    assert "That is not clearance, and this page will not offer any." in out
+    assert "belongs to a reviewer" in out
+
+    # The words a tool must never print about a change it did not judge.
+    for forbidden in ("assurance maintained", "minor change",
+                      "no re-review required", "still assured",
+                      "remains valid", "safe to deploy"):
+        assert forbidden.lower() not in out.lower(), (
+            "the impact page claimed %r" % forbidden)
+
+
+@needs
+def test_impact_shows_a_version_that_did_not_move_but_bytes_that_did(bundle):
+    """os-release keeps version 1.0-r0 across A and C while its measurement
+    changes. Rendering that as "1.0-r0 -> 1.0-r0" would read as a bug; it is
+    in fact the reason the join is on the leaf hash."""
+    out = render(bundle, "--hash", "#/impact")
+    assert "os-release  1.0-r0  (same version, different measurement)" in out
+    assert "1.0-r0 -> 1.0-r0" not in out
+
+
+@needs
+def test_impact_states_its_own_blind_spots(bundle):
+    out = render(bundle, "--hash", "#/impact")
+    # Files no package owns.
+    assert "25 regular files" in out
+    assert "/etc/ld.so.cache" in out
+    assert "not derivable from this bundle" in out
+    # The dependency-graph hole, named as the largest one.
+    assert "largest hole in the analysis" in out
+    assert "dependency graph" in out
+    # And the prior art for who makes the call.
+    assert "Assurance Continuity" in out
+    assert "Impact Analysis Report" in out
