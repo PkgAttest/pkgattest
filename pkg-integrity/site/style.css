@@ -485,3 +485,98 @@ a.filerow:hover, .filerow a:hover { color: var(--computed); }
   .hit, .ladder-row, .ladder-foot { grid-template-columns: 1fr; }
   .ladder-row { padding: 0.6rem 0; border-bottom: 1px dotted var(--line); }
 }
+
+/* -------------------------------------------------------------------- tabs */
+/* Two views of one proof: the arithmetic, and the shape that makes twelve
+   hashes enough. Neither is a summary of the other. */
+.tabs { margin: 1rem 0; }
+
+.tablist {
+  display: flex;
+  gap: 0.4rem;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.92rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.6rem 1.2rem;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab.is-current {
+  color: var(--computed);
+  border-color: var(--line);
+  border-bottom: 1px solid var(--ground);
+  background: var(--panel);
+}
+.tabpanel[hidden] { display: none; }
+.tabpanel > .ladder,
+.tabpanel > .treebox { margin-top: 0; border-top: none; }
+
+/* ------------------------------------------------------------------- tree */
+/* The audit path as the tree it is. Only the spine and its siblings are
+   drawn -- thirteen nodes, never 2,132. Each triangle is one hash standing
+   for a whole subtree; its width grows with the log of the records beneath
+   it, and the count is printed, because that count is the argument. */
+.treebox {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--computed);
+  border-top: none;
+  padding: 1.5rem 1.5rem 1.25rem;
+  overflow-x: auto;
+}
+.treebox .prose { margin: 1.25rem 0 0; }
+
+.tree { display: block; max-width: 46rem; margin: 0 auto; height: auto; }
+
+.tree-spine {
+  stroke: var(--computed);
+  stroke-width: 2;
+}
+.tree-edge {
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+.tree-subtree {
+  fill: rgba(77, 208, 225, 0.10);
+  stroke: var(--computed);
+  stroke-width: 1;
+  stroke-opacity: 0.55;
+}
+.tree-node {
+  fill: var(--computed);
+  stroke: var(--ground);
+  stroke-width: 2;
+}
+.tree-node.is-leaf { fill: var(--text); }
+.tree-node.is-root.is-ok { fill: var(--ok); }
+.tree-node.is-root.is-absent { fill: var(--absent-mark); }
+
+.tree-count {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.tree-level {
+  fill: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  opacity: 0.75;
+}
+.tree-label {
+  fill: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tree-subtree { transition: fill 160ms ease-out; }
+}

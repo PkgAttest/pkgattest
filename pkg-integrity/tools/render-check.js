@@ -3,6 +3,7 @@
  *
  *   node tools/render-check.js site-dist [--hash '#/limits']
  *                                       [--break sha256|sha512|ed25519]
+ *                                       [--show-hidden]
  *
  * The point is not to check pixels. It is to check the two rules the page is
  * supposed to enforce -- that a verdict is never drawn on top of a failed
@@ -26,6 +27,7 @@ const breakIdx = args.indexOf('--break');
 const breakName = breakIdx >= 0 ? args[breakIdx + 1] : null;
 const hashIdx = args.indexOf('--hash');
 const startHash = hashIdx >= 0 ? args[hashIdx + 1] : '';
+const showHidden = args.includes('--show-hidden');
 
 function makeNode(tag) {
   return {
@@ -37,6 +39,8 @@ function makeNode(tag) {
     listeners: {},
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return this.attrs[k]; },
+    removeAttribute(k) { delete this.attrs[k]; },
+    focus() {},
     addEventListener(ev, fn) {
       (this.listeners[ev] = this.listeners[ev] || []).push(fn);
     },
@@ -60,8 +64,14 @@ function makeNode(tag) {
 }
 
 /* Render the tree as text, one line per block-ish element, so assertions can
- * be made about what a reader actually sees. */
+ * be made about what a reader actually sees.
+ *
+ * Hidden nodes are skipped by default, so the dump is what is on screen --
+ * an inactive tab panel is in the DOM but not visible. Pass --show-hidden to
+ * include them, which is what a test asserting "the other tab exists and
+ * holds the right thing" wants. */
 function toLines(node, out = [], depth = 0) {
+  if (!showHidden && node.attrs && node.attrs.hidden !== undefined) return out;
   if (node._text !== null) {
     const t = node._text.trim();
     if (t) out.push(t);
@@ -77,6 +87,9 @@ const pending = [];
 
 const document = {
   createElement: makeNode,
+  // SVG nodes are built with createElementNS; the shim treats them like any
+  // other element so the tree diagram is exercised by the render tests too.
+  createElementNS: (ns, tag) => makeNode(tag),
   createTextNode(t) { const n = makeNode('#text'); n.textContent = t; return n; },
   getElementById: id => (id === 'view' ? view : null),
   head,

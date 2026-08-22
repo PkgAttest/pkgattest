@@ -107,9 +107,6 @@ var PKGI_VERIFY = (function (crypto) {
 
   var EMPTY_TREE_ROOT = sha256(new Uint8Array(0));
 
-  /* Merkle Tree Hash over leafHashes[0:size]. The recursion splits at the
-   * largest power of two below n, so its depth is logarithmic (about 12 at
-   * n=2131, about 20 at a million) -- no stack risk at any realistic size. */
   /* A tree size must be a non-negative integer. Without this guard, subtree()
    * computes n = hi - lo <= 0, largestPowerOfTwoLt returns 1, and the
    * interval never shrinks: '0', null, -1 and 2.5 all recurse until the stack
@@ -128,6 +125,9 @@ var PKGI_VERIFY = (function (crypto) {
     return size;
   }
 
+  /* Merkle Tree Hash over leafHashes[0:size]. The recursion splits at the
+   * largest power of two below n, so its depth is logarithmic (about 12 at
+   * n=2131, about 20 at a million) -- no stack risk at any realistic size. */
   function mth(leafHashes, size) {
     size = checkedSize(size, leafHashes.length);
     if (size === 0) return EMPTY_TREE_ROOT;
@@ -160,6 +160,33 @@ var PKGI_VERIFY = (function (crypto) {
       return path(m - k, lo + k, hi).concat([subtree(leafHashes, lo, lo + k)]);
     }
     return path(index, 0, size);
+  }
+
+  /* Which subtree each proof node stands for: [lo, hi) of the leaf range it
+   * covers, and the side it sits on. Derived from the SAME recursion that
+   * builds the proof, so a drawing made from this cannot disagree with the
+   * proof it claims to illustrate.
+   *
+   * spans[i] describes proof[i]. Their leaf ranges partition every leaf in
+   * the tree except the one being proved -- which is the whole point of an
+   * audit path, and worth showing rather than asserting. */
+  function inclusionSpans(index, size) {
+    if (size === undefined) size = index + 1;
+    var spans = [];
+    function walk(m, lo, hi) {
+      var n = hi - lo;
+      if (n === 1) return;
+      var k = largestPowerOfTwoLt(n);
+      if (m < k) {
+        walk(m, lo, lo + k);
+        spans.push({ side: 'right', lo: lo + k, hi: hi });
+      } else {
+        walk(m - k, lo + k, hi);
+        spans.push({ side: 'left', lo: lo, hi: lo + k });
+      }
+    }
+    walk(index, 0, size);
+    return spans;
   }
 
   /* Port of merkle.verify_inclusion. The direction alternates per level and
@@ -464,7 +491,7 @@ var PKGI_VERIFY = (function (crypto) {
     leafHash: leafHash, nodeHash: nodeHash,
     largestPowerOfTwoLt: largestPowerOfTwoLt, EMPTY_TREE_ROOT: EMPTY_TREE_ROOT,
     mth: mth, inclusionProof: inclusionProof, verifyInclusion: verifyInclusion,
-    inclusionSteps: inclusionSteps,
+    inclusionSteps: inclusionSteps, inclusionSpans: inclusionSpans,
     consistencyProof: consistencyProof, verifyConsistency: verifyConsistency,
     deviceNodeHash: deviceNodeHash, deviceRoot: deviceRoot,
     expectedPcr14: expectedPcr14,

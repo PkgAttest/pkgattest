@@ -341,3 +341,78 @@ def test_a_malformed_route_lands_on_a_page(bundle):
             or "Unknown value" in out
             or "lookup" in out)
     assert "Traceback" not in out
+
+
+# ------------------------------------------------------------ the proof tabs
+@needs
+def test_proof_has_two_tabs_with_the_ladder_first(bundle):
+    """The ladder is the arithmetic and stays the default view; the tree is a
+    second tab, present in the DOM but not shown until selected."""
+    visible = render(bundle, "--hash", "#/pkg/dropbear")
+    assert "Each step" in visible and "The shape" in visible   # both buttons
+
+    # Ladder visible by default.
+    assert "sibling on the right" in visible
+    # Tree hidden by default: its triangle labels are not on screen.
+    assert "1,024 records" not in visible
+
+    everything = render(bundle, "--hash", "#/pkg/dropbear", "--show-hidden")
+    assert "1,024 records" in everything
+
+
+@needs
+def test_tree_triangles_account_for_every_other_record(bundle):
+    """Each triangle is one hash standing for a whole subtree. Their counts
+    are the argument for why twelve hashes cover 2,132 records, so they have
+    to be right and they have to add up."""
+    out = render(bundle, "--hash", "#/pkg/dropbear", "--show-hidden")
+
+    # The sizes double all the way up, plus the short last subtree.
+    for n in ("1 record", "2 records", "4 records", "8 records",
+              "16 records", "32 records", "64 records", "128 records",
+              "256 records", "512 records", "1,024 records", "84 records"):
+        assert n in out, "missing triangle label %r" % n
+
+    assert "12 triangles, 2,131 records between them" in out
+    assert "every record in the log except this one" in out
+    # And it explains the one that breaks the pattern rather than hiding it.
+    assert "84 records, because 2,132 is not a power of two" in out
+
+
+@needs
+def test_tree_and_ladder_describe_the_same_proof(bundle):
+    """inclusionSpans and inclusionSteps come from different recursions. If
+    they ever disagreed the picture would illustrate a proof that is not the
+    one being verified."""
+    script = (
+        "const V=require(%s);"
+        "const size=2132, idx=18;"
+        "const proof=V.inclusionProof("
+        "  [...Array(size)].map((_,i)=>V.sha256(V.utf8('x'+i))), idx, size);"
+        "const steps=V.inclusionSteps(idx,size,proof);"
+        "const spans=V.inclusionSpans(idx,size);"
+        "const sides=steps.map(s=>s.side).join(',');"
+        "const sspan=spans.map(s=>s.side).join(',');"
+        "const covered=spans.reduce((a,s)=>a+(s.hi-s.lo),0);"
+        "console.log(JSON.stringify({n:proof.length,m:spans.length,"
+        "  sidesAgree:sides===sspan,covered:covered}));"
+        % json.dumps(os.path.join(BASE, "site", "verify.js")))
+    proc = subprocess.run(["node", "-e", script], capture_output=True,
+                          text=True, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    r = json.loads(proc.stdout)
+    assert r["n"] == r["m"], "one span per proof node"
+    assert r["sidesAgree"], "the drawing would show the wrong side"
+    assert r["covered"] == 2131, "spans must partition every other leaf"
+
+
+@needs
+def test_tree_is_svg_not_markup(bundle):
+    """The diagram is built with createElementNS; the shim throws on
+    innerHTML, so reaching here at all proves it."""
+    app = open(os.path.join(bundle, "app.js"), encoding="utf-8").read()
+    assert "createElementNS" in app
+    assert "http://www.w3.org/2000/svg" in app
+    out = render(bundle, "--hash", "#/pkg/dropbear", "--show-hidden")
+    assert "root  f1f87542" in out
+    assert "this record" in out

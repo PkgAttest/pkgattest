@@ -551,6 +551,168 @@
     return hex.slice(0, 8) + ' ' + hex.slice(8, 16) + '...';
   }
 
+  // ------------------------------------------------------------------- tabs
+  /* Two views of one proof. The ladder is the arithmetic, step by step; the
+   * tree is the shape that makes twelve hashes enough for 2,132 records.
+   * Same data, same order, same source -- neither is a summary of the other. */
+  var tabSeq = 0;
+
+  function tabbed(panels) {
+    var wrap = el('div', 'tabs');
+    var bar = el('div', 'tablist');
+    bar.setAttribute('role', 'tablist');
+    var id = 'tabs' + (++tabSeq);
+    var buttons = [], bodies = [];
+
+    panels.forEach(function (p, i) {
+      var btn = el('button', 'tab', p.label);
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('id', id + '-t' + i);
+      btn.setAttribute('aria-controls', id + '-p' + i);
+      var body = el('div', 'tabpanel');
+      body.setAttribute('role', 'tabpanel');
+      body.setAttribute('id', id + '-p' + i);
+      body.setAttribute('aria-labelledby', id + '-t' + i);
+      body.appendChild(p.build());
+      buttons.push(btn);
+      bodies.push(body);
+      bar.appendChild(btn);
+    });
+
+    function select(n) {
+      buttons.forEach(function (b, i) {
+        b.setAttribute('aria-selected', i === n ? 'true' : 'false');
+        b.setAttribute('tabindex', i === n ? '0' : '-1');
+        b.className = 'tab' + (i === n ? ' is-current' : '');
+        if (i === n) bodies[i].removeAttribute('hidden');
+        else bodies[i].setAttribute('hidden', '');
+      });
+    }
+
+    buttons.forEach(function (b, i) {
+      b.addEventListener('click', function () { select(i); });
+      b.addEventListener('keydown', function (e) {
+        var d = e.key === 'ArrowRight' ? 1 : (e.key === 'ArrowLeft' ? -1 : 0);
+        if (!d) return;
+        var n = (i + d + buttons.length) % buttons.length;
+        select(n);
+        buttons[n].focus && buttons[n].focus();
+      });
+    });
+
+    wrap.appendChild(bar);
+    bodies.forEach(function (b) { wrap.appendChild(b); });
+    select(0);
+    return wrap;
+  }
+
+  // ----------------------------------------------------------- tree drawing
+  var SVGNS = 'http://www.w3.org/2000/svg';
+
+  function svg(tag, attrs, cls) {
+    var node = document.createElementNS(SVGNS, tag);
+    if (cls) node.setAttribute('class', cls);
+    for (var k in attrs) {
+      if (Object.prototype.hasOwnProperty.call(attrs, k)) {
+        node.setAttribute(k, String(attrs[k]));
+      }
+    }
+    return node;
+  }
+
+  function svgText(x, y, text, cls, anchor) {
+    var t = svg('text', { x: x, y: y, 'text-anchor': anchor || 'middle' }, cls);
+    t.textContent = text;
+    return t;
+  }
+
+  /* The audit path drawn as the tree it actually is.
+   *
+   * Only the spine and its siblings are drawn -- 13 nodes, never 2,132. Each
+   * sibling is one hash standing in for a whole subtree, so it is drawn as a
+   * triangle whose width grows with the number of leaves underneath it and
+   * labelled with that count. Those counts are the point: they sum to every
+   * record in the log except this one, which is why twelve hashes suffice.
+   *
+   * The widths come from V.inclusionSpans, computed by the same recursion
+   * that produced the proof, so the picture cannot drift from the arithmetic
+   * on the other tab. */
+  function treeDiagram(index, size, proof, rootHex, ok) {
+    var spans = V.inclusionSpans(index, size);
+    var L = proof.length;
+    var rowH = 44, top = 54, cx = 380, W = 760;
+    var H = top + L * rowH + 76;
+
+    var root = svg('svg', {
+      viewBox: '0 0 ' + W + ' ' + H,
+      width: '100%', role: 'img',
+      'aria-label': 'The audit path from leaf ' + index + ' to the root: ' +
+                    L + ' sibling subtrees.'
+    }, 'tree');
+
+    function y(r) { return top + r * rowH; }
+
+    // The spine: leaf at the bottom, root at the top.
+    root.appendChild(svg('line',
+      { x1: cx, y1: y(0), x2: cx, y2: y(L) }, 'tree-spine'));
+
+    for (var r = 0; r < L; r++) {
+      var j = L - 1 - r;                 // proof[j] joins to make row r
+      var sp = spans[j];
+      var leaves = sp.hi - sp.lo;
+      var w = 26 + 7 * (Math.log(leaves) / Math.LN2);
+      var dx = 78 + w / 2;
+      var tx = sp.side === 'left' ? cx - dx : cx + dx;
+      var ty = y(r + 1);
+      var th = 24;
+
+      // parent -> sibling subtree
+      root.appendChild(svg('line',
+        { x1: cx, y1: y(r), x2: tx, y2: ty }, 'tree-edge'));
+      root.appendChild(svg('polygon', {
+        points: [tx, ty, tx - w / 2, ty + th, tx + w / 2, ty + th].join(' ')
+      }, 'tree-subtree'));
+      root.appendChild(svgText(tx, ty + th + 15, group(leaves) +
+        (leaves === 1 ? ' record' : ' records'), 'tree-count'));
+      root.appendChild(svgText(
+        sp.side === 'left' ? cx - 30 : cx + 30, y(r) + 17,
+        'L' + (j + 1), 'tree-level',
+        sp.side === 'left' ? 'end' : 'start'));
+    }
+
+    // Nodes on the spine, drawn last so they sit above the edges.
+    for (var k = 0; k <= L; k++) {
+      var isRoot = (k === 0), isLeaf = (k === L);
+      root.appendChild(svg('circle', {
+        cx: cx, cy: y(k), r: isRoot ? 9 : (isLeaf ? 8 : 5)
+      }, 'tree-node' + (isRoot ? ' is-root' + (ok ? ' is-ok' : ' is-absent')
+                               : (isLeaf ? ' is-leaf' : ''))));
+    }
+
+    root.appendChild(svgText(cx, y(0) - 20,
+      'root  ' + rootHex.slice(0, 8) + ' ' + rootHex.slice(8, 16) + '...',
+      'tree-label'));
+    root.appendChild(svgText(cx, y(L) + 30,
+      'this record  \u00b7  leaf ' + group(index), 'tree-label'));
+
+    var box = el('div', 'treebox');
+    box.appendChild(root);
+    var total = spans.reduce(function (a, s) { return a + (s.hi - s.lo); }, 0);
+    var sizes = spans.map(function (s) { return s.hi - s.lo; });
+    var odd = sizes.filter(function (n) { return (n & (n - 1)) !== 0; });
+    var caption = L + ' triangles, ' + group(total) + ' records between them' +
+      ' \u2014 every record in the log except this one. Each is a single ' +
+      'hash standing for a whole subtree, which is why a proof this short ' +
+      'covers a log this size.';
+    if (odd.length) {
+      caption += ' The sizes double all the way up except one: ' +
+        group(odd[0]) + ' records, because ' + group(size) + ' is not a ' +
+        'power of two and the last subtree is short.';
+    }
+    box.appendChild(el('p', 'prose dim', caption));
+    return box;
+  }
+
   // ------------------------------------------------------------ package view
   function findPackage(r, name, wantBuild) {
     var found = null;
@@ -651,7 +813,13 @@
       view.appendChild(el('p', 'prose dim',
         lad.steps + ' sibling hashes, derived here from the records this ' +
         'page holds. The server was not asked for a proof.'));
-      view.appendChild(lad.node);
+      view.appendChild(tabbed([
+        { label: 'Each step', build: function () { return lad.node; } },
+        { label: 'The shape', build: function () {
+            return treeDiagram(logIndex, snap.tree_size, proof,
+                               snap.root_hash, lad.ok);
+          } }
+      ]));
 
       view.appendChild(el('h2', null, 'Four \u2014 the signature'));
       var d4 = el('div', 'proofline');
