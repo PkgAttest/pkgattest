@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pkgattest</title>
+<!--
+  default-src 'none' and no inline script or style: the page loads classic
+  scripts from its own directory and nothing else, ever. `file:` is listed
+  because the offline bundle must be the same bytes as the hosted one, and
+  an opened-from-disk page has no origin to match 'self'.
+
+  frame-ancestors is deliberately absent: it is ignored in a <meta> CSP, and
+  GitHub Pages cannot set headers, so listing it would imply a protection
+  that does not exist.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' file:; style-src 'self' file:; img-src 'self' data: file:; base-uri 'none'; form-action 'none'">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="masthead">
+  <a class="wordmark" href="#/">pkgattest</a>
+  <nav class="masthead-nav">
+    <a href="#/">verification</a>
+    <a href="#/limits">what this does not prove</a>
+  </nav>
+</header>
+
+<main id="view" class="view">
+  <p class="boot">Loading the log and verifying it in this browser.</p>
+</main>
+
+<footer class="colophon">
+  <p class="mono">
+    <span class="tag tag-computed">computed here</span> monospace: your
+    browser derived this value while you were reading.
+  </p>
+  <p class="prose">
+    <span class="tag tag-asserted">asserted</span> this typeface: someone is
+    telling you something. Nothing verified it.
+  </p>
+</footer>
+
+<!-- Order matters: crypto, then the verifier, then the data it reads. -->
+<script src="vendor/pkgcrypto.js"></script>
+<script src="verify.js"></script>
+<script src="data/snapshot.js"></script>
+<script src="data/sth-history.js"></script>
+<script src="data/builds-index.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>

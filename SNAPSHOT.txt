@@ -1,0 +1,33 @@
+pkgattest site snapshot
+=======================
+
+This bundle is an archived, citable snapshot of one signed tree
+head. It is not a live mirror: it says what the log looked like at
+the head below, and nothing about what it looks like now.
+
+  schema      pkgattest-site-v1
+  snapshot    2132-f1f87542c9ee
+  tree_size   2132
+  root_hash   f1f87542c9ee89c1e96dd537b42179b35169dcf43d0d7dd9e883526d1b0dc441
+  timestamp   1787231925
+  signature   dcc4d221bdda93d4f0009890afa72eef89f4015360840d9abd1e1973f6787870091cd8759bb371084a337d225000ec503fb6bf8b40e9ce499264441e3bf2ce08
+  key_id      sha256:8f9e0c7684c61e1d6ab8f0e85982c9be9c573ebdb9f097f367f304f1e6b9e125
+  records     2132
+  builds      3
+
+Re-check the head yourself, offline, without this page:
+
+  pkgattest verify-sth --sth-file sth.json \
+                       --log-pub log_ed25519.pub
+
+That proves the head is signed by the key in this directory. It
+does NOT prove that key is the log's: compare key_id above against
+a value you obtained elsewhere.
+
+What a log entry does and does not say
+--------------------------------------
+Each entry commits to one PACKAGE (name, version, architecture,
+image line, and the digest of its file list). No entry commits to
+an image, so 'every package is published' does not mean anyone
+published this image -- an image built only from already-published
+packages, including a downgrade, would also satisfy it.

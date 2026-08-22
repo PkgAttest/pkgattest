@@ -1,0 +1,487 @@
+/* pkgattest -- a page whose typeface tells you who computed what.
+ *
+ * Monospace is the primary voice and carries everything this browser derived.
+ * The sans face appears only where somebody is asserting something nobody
+ * verified. The trust boundary is legible before you read a word.
+ *
+ * Committed dark: the demo is projected, and every value here is hex. Colour
+ * never carries meaning alone -- each state also has a word and a mark.
+ * No web fonts: the CSP forbids off-origin loads and the bundle must run from
+ * file://, so both voices come from system stacks.
+ */
+
+:root {
+  --ground: #0d1117;
+  --panel: #161b22;
+  --line: #2a313a;
+  --text: #e6e6e6;
+  --muted: #9da7b3;
+
+  --computed: #4dd0e1;   /* a value this browser derived */
+  --ok: #3fb950;
+  --absent: #ff7b72;     /* lighter than the mark colour, for text contrast */
+  --absent-mark: #f85149;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+          "Roboto Mono", Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+
+  --measure: 68rem;
+  --step: 1.25rem;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font: 400 1.25rem/1.55 var(--mono);
+  font-variant-ligatures: none;
+  padding: 0 var(--step) 6rem;
+}
+
+a { color: inherit; }
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--computed);
+  outline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------- masthead */
+.masthead {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: 2rem 0 3.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.wordmark {
+  font-size: 1.1rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--muted);
+}
+.wordmark::before { content: "\2500\2500  "; color: var(--line); }
+
+.masthead-nav { display: flex; gap: 1.75rem; font-size: 0.95rem; }
+.masthead-nav a { color: var(--muted); text-decoration: none; }
+.masthead-nav a:hover { color: var(--text); text-decoration: underline; }
+
+/* -------------------------------------------------------------------- view */
+.view { max-width: var(--measure); margin: 0 auto; }
+
+.boot { color: var(--muted); }
+
+.eyebrow {
+  color: var(--muted);
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin: 0 0 1.25rem;
+}
+
+/* The thesis. Sized to be read from the back of a room. */
+.thesis {
+  font-family: var(--sans);
+  font-size: clamp(1.9rem, 5.2vw, 3.4rem);
+  font-weight: 620;
+  line-height: 1.12;
+  letter-spacing: -0.022em;
+  margin: 0 0 2.75rem;
+  max-width: 22ch;
+}
+.thesis .turn { color: var(--absent); }
+
+h2 {
+  font-size: 1rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 400;
+  margin: 4.5rem 0 1.25rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--line);
+}
+
+/* ----------------------------------------------------------------- receipt */
+/* The signature element: a ledger of what this browser actually did, with
+   measured numbers. Not a progress bar -- the work takes milliseconds, so the
+   page reports the real figure instead of performing one. */
+.receipt {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--computed);
+  padding: 1.75rem 1.9rem;
+  margin: 0 0 1.25rem;
+  overflow-x: auto;
+}
+
+.receipt-row {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr auto;
+  gap: 0.5rem 1.5rem;
+  align-items: baseline;
+  padding: 0.42rem 0;
+}
+.receipt-row + .receipt-row { border-top: 1px dotted var(--line); }
+
+.receipt-op {
+  color: var(--muted);
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.receipt-detail { min-width: 0; }
+.receipt-value { color: var(--computed); white-space: nowrap; }
+.receipt-value.is-ok { color: var(--ok); }
+.receipt-value.is-absent { color: var(--absent); }
+
+.receipt-note {
+  margin: 1.4rem 0 0;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.98rem;
+}
+
+/* A 64-hex digest, always whole, in 8 groups of 8. Never truncated inside
+   anything being verified -- an abbreviated hash cannot be checked. */
+.digest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.85rem;
+  font-size: 1.02rem;
+  letter-spacing: 0.02em;
+}
+.digest span { color: var(--text); }
+.digest.is-computed span { color: var(--computed); }
+
+/* ------------------------------------------------------------------ builds */
+.build {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr auto;
+  gap: 0.4rem 1.5rem;
+  align-items: baseline;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.build-label {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.build.is-absent .build-label { color: var(--absent); }
+.build-id { color: var(--muted); font-size: 0.98rem; word-break: break-all; }
+.build-verdict { white-space: nowrap; }
+.build-verdict.is-ok { color: var(--ok); }
+.build-verdict.is-absent { color: var(--absent); }
+
+/* The named package: the one thing a reader should leave with. */
+.named {
+  grid-column: 2 / -1;
+  margin-top: 0.6rem;
+  padding: 0.85rem 1.1rem;
+  background: var(--panel);
+  border-left: 3px solid var(--absent-mark);
+  color: var(--absent);
+}
+.named .named-scope {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+/* -------------------------------------------------------------------- tags */
+.tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  vertical-align: 0.08em;
+  margin-right: 0.55rem;
+}
+.tag-computed { color: var(--computed); }
+.tag-asserted { color: var(--muted); }
+
+/* ------------------------------------------------------------------- prose */
+/* Sans means: nobody verified this. */
+.prose {
+  font-family: var(--sans);
+  font-size: 1.08rem;
+  line-height: 1.6;
+  color: var(--text);
+  max-width: 62ch;
+}
+.prose.dim { color: var(--muted); }
+
+.limit {
+  padding: 1.4rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.limit h3 {
+  font-family: var(--mono);
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  margin: 0 0 0.6rem;
+  color: var(--text);
+}
+.limit p { margin: 0; }
+
+/* The key, and the instruction that makes it mean anything. */
+.keybox {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1.5rem 1.75rem;
+  margin: 1.25rem 0;
+}
+.keybox .digest { margin: 0.75rem 0; }
+
+.cmd {
+  display: block;
+  background: var(--ground);
+  border: 1px solid var(--line);
+  padding: 0.9rem 1.1rem;
+  margin: 1rem 0 0;
+  color: var(--text);
+  font-size: 1rem;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+/* ------------------------------------------------------------------ blocked */
+/* If a primitive is broken, the page renders this and nothing else. It must
+   never be possible to show a verdict on top of arithmetic that failed. */
+.blocked {
+  border: 1px solid var(--absent-mark);
+  border-left: 3px solid var(--absent-mark);
+  background: var(--panel);
+  padding: 1.75rem 1.9rem;
+}
+.blocked h2 { margin-top: 0; border: 0; color: var(--absent); }
+.blocked ul { margin: 0.75rem 0 0; padding-left: 1.25rem; }
+.blocked li { color: var(--absent); }
+
+.colophon {
+  max-width: var(--measure);
+  margin: 5rem auto 0;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+.colophon p { margin: 0 0 0.6rem; max-width: 62ch; }
+
+@media (max-width: 40rem) {
+  body { font-size: 1.05rem; }
+  .receipt-row, .build { grid-template-columns: 1fr; }
+  .receipt-value, .build-verdict { white-space: normal; }
+  .named { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .receipt-row { animation: settle 240ms ease-out both; }
+  @keyframes settle {
+    from { opacity: 0; transform: translateY(-2px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* --------------------------------------------------------------- verdicts */
+.verdict {
+  font-family: var(--sans);
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: -1.5rem 0 2.5rem;
+}
+.verdict.is-ok { color: var(--ok); }
+.verdict.is-absent { color: var(--absent); }
+
+.thesis.unknown { color: var(--muted); }
+
+/* ------------------------------------------------------------ raw evidence */
+/* The actual bytes. Shown because "trust me, I hashed something" is not a
+   claim anybody can check. */
+.bytes {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  padding: 1.1rem 1.3rem;
+  margin: 1rem 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  color: var(--text);
+}
+
+.proofline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+  padding: 0.9rem 0 0.2rem;
+}
+.proofline-op { color: var(--muted); font-size: 0.95rem; }
+.proofline .is-ok { color: var(--ok); }
+.proofline .is-absent { color: var(--absent); }
+
+/* ------------------------------------------------------------------ ladder */
+/* One row per level of the fold. The direction is printed per row rather than
+   as a single formula: RFC 6962 alternates, and the odd-tree case fires at
+   this size. Intermediates are abbreviated -- they are working values; the
+   root at the bottom is whole, because that is the value being checked. */
+.ladder {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--computed);
+  padding: 1.25rem 1.5rem;
+  margin: 1rem 0;
+  overflow-x: auto;
+}
+.ladder-row {
+  display: grid;
+  grid-template-columns: 3.5rem 15rem 1fr;
+  gap: 0.35rem 1.25rem;
+  align-items: baseline;
+  padding: 0.3rem 0;
+  font-size: 0.98rem;
+}
+.ladder-row.is-head { color: var(--text); }
+.ladder-level { color: var(--muted); font-size: 0.85rem; }
+.ladder-value { color: var(--computed); }
+.ladder-op { color: var(--muted); font-size: 0.9rem; }
+
+.ladder-foot {
+  display: grid;
+  grid-template-columns: 3.5rem 1fr;
+  gap: 1.25rem;
+  margin-top: 0.9rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--line);
+}
+.ladder-verdict { margin-top: 0.5rem; }
+.ladder-foot.is-ok .ladder-verdict { color: var(--ok); }
+.ladder-foot.is-absent .ladder-verdict { color: var(--absent); }
+
+/* ------------------------------------------------------------- lookup hits */
+.hit {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.5rem 1.5rem;
+  padding: 1.1rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.hit-kind {
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.hit-body { min-width: 0; }
+.hit-note {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-top: 0.35rem;
+  max-width: 62ch;
+}
+.hit-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: var(--computed);
+  font-size: 0.95rem;
+}
+
+/* -------------------------------------------------------------- file lists */
+.filelist { margin: 0.75rem 0 0; }
+.filerow {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.3rem 1.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted var(--line);
+  font-size: 0.95rem;
+  color: var(--text);
+  text-decoration: none;
+}
+a.filerow:hover, .filerow a:hover { color: var(--computed); }
+.filepath { word-break: break-all; color: inherit; }
+.filehash { color: var(--muted); white-space: nowrap; }
+
+/* ------------------------------------------------------------------- stats */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1.5rem;
+  margin: 1.25rem 0 0;
+}
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1.25rem 1.4rem;
+}
+.stat-value {
+  font-size: 1.5rem;
+  color: var(--computed);
+  line-height: 1.2;
+}
+.stat-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-top: 0.4rem;
+}
+.stat .prose { font-size: 0.95rem; margin: 0.6rem 0 0; }
+
+/* ------------------------------------------------------------------ search */
+.search { margin: 1.25rem 0 2.5rem; }
+.search-label {
+  display: block;
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-bottom: 0.6rem;
+}
+.search-line { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.search-input {
+  flex: 1 1 24rem;
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.05rem;
+  padding: 0.7rem 0.9rem;
+}
+.search-input:focus-visible { outline: 2px solid var(--computed); }
+.search-go {
+  background: transparent;
+  border: 1px solid var(--computed);
+  color: var(--computed);
+  font: inherit;
+  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+  cursor: pointer;
+}
+.search-go:hover { background: var(--computed); color: var(--ground); }
+
+@media (max-width: 40rem) {
+  .hit, .ladder-row, .ladder-foot { grid-template-columns: 1fr; }
+  .ladder-row { padding: 0.6rem 0; border-bottom: 1px dotted var(--line); }
+}
