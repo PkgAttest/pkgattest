@@ -227,6 +227,32 @@ disclaimer. The one-field SFR sketch on that page is an observation, not a
 submission — it has not been through an OCP Security Project call and nothing
 here is endorsed by OCP.
 
+## Arguments against this approach
+
+`#/objections` states the case against, including the parts with no rebuttal.
+Objections are grouped by verdict — **stands**, **answered**, **conceded** —
+and three of them stand:
+
+- **Measuring at rest says nothing about runtime.** The TOCTOU problem in
+  remote attestation is described in the literature as unsolved. This
+  addresses substitution in the supply chain, not compromise of a running
+  system.
+- **Files no package owns are invisible.** `/etc/passwd`, `/etc/shadow`,
+  `/etc/ld.so.cache` and 22 others are in no leaf, so in no device root, so
+  in no PCR. Adding a root user changes nothing this commits to. That is a
+  way through, not a rough edge, and it is not yet closed.
+- **One log with one key is not Certificate Transparency.** What publication
+  buys is detectability of divergence — not a correct build.
+
+Two are conceded outright: this could sit on Sigstore's **Rekor**, and
+**CoRIM** already carries per-component reference values, which makes it the
+right implementation target rather than a refutation. The argument is about
+granularity, not about needing a new format.
+
+The line through all of it: every objection that lands is a version of *what
+is happening on that machine right now*; every one that misses is a version
+of *what changed between two builds*.
+
 ## Recording plan (per demo.md production rules)
 
 1. Two SD cards, labeled A and B, flashed once each. The verifier ssh key

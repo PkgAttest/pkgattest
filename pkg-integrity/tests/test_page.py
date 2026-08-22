@@ -541,3 +541,63 @@ def test_impact_states_its_own_blind_spots(bundle):
     # And the prior art for who makes the call.
     assert "Assurance Continuity" in out
     assert "Impact Analysis Report" in out
+
+
+# ------------------------------------------------------- the objections view
+@needs
+def test_objections_page_states_the_unanswerable_ones_as_unanswerable(bundle):
+    """A page listing only the objections it can rebut is an advertisement.
+    Three of these must be marked as having no answer."""
+    out = render(bundle, "--hash", "#/objections")
+    assert "Three of these have no answer." in out
+    assert "Objections that stand" in out
+    assert out.count("no answer") >= 4          # heading claim + 3 tags
+
+    # Each of the three, stated rather than softened.
+    assert "Measuring files at rest says nothing about what is running." in out
+    assert "Files that belong to no package are invisible to it." in out
+    assert "One log with one key is not a transparency ecosystem." in out
+
+
+@needs
+def test_objections_page_does_not_soften_the_bypass(bundle):
+    """The unowned-files gap defeats the mechanism rather than bounding it,
+    and the page has to say so in those terms."""
+    out = render(bundle, "--hash", "#/objections")
+    assert "Adding a root user to /etc/passwd changes nothing this " \
+           "mechanism commits to" in out
+    assert "it is a way through" in out
+    assert "has not been built" in out
+
+
+@needs
+def test_objections_page_concedes_where_it_should(bundle):
+    out = render(bundle, "--hash", "#/objections")
+    assert "Objections that are simply right" in out
+    assert "Why not build this on Rekor?" in out
+    assert "a demonstration, not a proposal" in out
+    assert "CoRIM already carries per-component reference values." in out
+    assert "the right implementation target" in out
+
+
+@needs
+def test_objections_page_scopes_the_claim_honestly(bundle):
+    """The IMA rebuttal is real but partial, and the page must say where it
+    stops rather than claim a clean win."""
+    out = render(bundle, "--hash", "#/objections")
+    assert "This is Linux IMA with extra steps." in out
+    assert "differs on every boot" in out
+    assert "The limit of the rebuttal, stated plainly" in out
+    assert "not that IMA cannot get there" in out
+
+    # And the through-line that scopes the whole project.
+    assert "worth exactly nothing against the first" in out
+
+
+@needs
+def test_objections_page_cites_its_sources(bundle):
+    out = render(bundle, "--hash", "#/objections")
+    for src in ("IMA concepts", "TOCTOU Problem in Remote Attestation",
+                "Sigstore Rekor", "CoRIM-based reference measurement"):
+        assert src in out, src
+    assert "will not resolve from the offline copy" in out
