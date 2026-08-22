@@ -626,3 +626,54 @@ a.filerow:hover, .filerow a:hover { color: var(--computed); }
   .vocab-row { grid-template-columns: 1fr; gap: 0.15rem; padding: 0.8rem 0; }
   .vocab-what { color: var(--computed); }
 }
+
+/* ------------------------------------------------------------- objections */
+/* A page that lists only the objections it can rebut is an advertisement.
+   The verdict tag is the honest part: three of these say "no answer", and
+   they are coloured like every other failure on this site. */
+.objection {
+  border-left: 3px solid var(--line);
+  padding: 0.2rem 0 1rem 1.4rem;
+  margin: 1.75rem 0;
+}
+.objection.is-stands { border-left-color: var(--absent-mark); }
+.objection.is-answered { border-left-color: var(--ok); }
+.objection.is-conceded { border-left-color: var(--computed); }
+
+.objection-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  margin-bottom: 0.9rem;
+}
+.objection-claim {
+  font-family: var(--sans);
+  font-size: 1.35rem;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+  max-width: 34ch;
+}
+.is-stands .objection-claim { color: var(--absent); }
+
+.verdict-tag {
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+.verdict-tag.is-stands { color: var(--absent); }
+.verdict-tag.is-answered { color: var(--ok); }
+.verdict-tag.is-conceded { color: var(--computed); }
+
+.objection .prose + .prose { margin-top: 0.85rem; }
+
+@media (max-width: 40rem) {
+  .objection-head { flex-direction: column; align-items: flex-start; }
+}

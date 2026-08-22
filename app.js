@@ -1309,6 +1309,207 @@
     view.appendChild(backLink());
   }
 
+  // --------------------------------------------------------- objections view
+  /* Arguments against this approach, including the ones with no answer.
+   *
+   * This whole page is assertion -- it argues, it does not compute -- so it
+   * is set in the asserting typeface throughout. That is the point of having
+   * the rule.
+   *
+   * The three marked "stands" are not softened. A project that lists only
+   * the objections it can rebut has published an advertisement. */
+  var OBJECTIONS = [
+    {
+      verdict: 'stands', label: 'no answer',
+      claim: 'Measuring files at rest says nothing about what is running.',
+      body: [
+        'A file is measured when the image is built and again when the BMC ' +
+        'boots. Neither says anything about a process compromised after it ' +
+        'loaded. The literature calls this the TOCTOU problem in remote ' +
+        'attestation and describes it as unsolved: transient malware can ' +
+        'infect a device, do its work, and erase itself before the next ' +
+        'attestation, leaving nothing to measure.',
+        'This approach is about substitution in the supply chain \u2014 a ' +
+        'different package arriving in a build. It is not about compromise ' +
+        'of a running system, and nothing here should be read as covering ' +
+        'the second.'
+      ]
+    },
+    {
+      verdict: 'stands', label: 'no answer',
+      claim: 'Files that belong to no package are invisible to it.',
+      body: [
+        '25 regular files in the built image are owned by no package: ' +
+        '/etc/passwd, /etc/shadow, /etc/ld.so.cache, the kernel module ' +
+        'indexes depmod writes, and three written by the measurement pass ' +
+        'itself. None is in any package leaf, so none is in the device root, ' +
+        'so none is in PCR 14.',
+        'Adding a root user to /etc/passwd changes nothing this mechanism ' +
+        'commits to. That is not a rough edge, it is a way through. Closing ' +
+        'it needs a leaf covering unowned files, and that has not been built.'
+      ]
+    },
+    {
+      verdict: 'stands', label: 'no answer',
+      claim: 'One log with one key is not a transparency ecosystem.',
+      body: [
+        'Certificate Transparency works because there are many independent ' +
+        'logs, clients enforce inclusion, and they gossip about what they ' +
+        'have seen. Here there is one log, run by whoever builds the images, ' +
+        'with no monitors and no gossip.',
+        'What publication buys is narrower than it sounds: divergence ' +
+        'becomes detectable. You cannot publish one thing and ship another ' +
+        'without it being visible to anyone who looks. It does not make the ' +
+        'build correct, and nothing here should be read as saying so.'
+      ]
+    },
+    {
+      verdict: 'answered', label: 'answered, partly',
+      claim: 'This is Linux IMA with extra steps.',
+      body: [
+        'IMA measures files as they are accessed and extends PCR 10 as it ' +
+        'goes. Because post-OS execution is multi-process, the order of ' +
+        'those extends \u2014 and therefore the PCR value \u2014 differs on every ' +
+        'boot; the IMA PCR is documented as unsuitable even for a TPM ' +
+        'unseal. One image has no single IMA value to compare.',
+        'pkg-merkle-v1 hashes a name-sorted set, so an image has exactly one ' +
+        'root: the same on every boot, the same on every device, and ' +
+        'diffable against another image. IMA also measures what ran; this ' +
+        'measures what is installed, including what has not run yet.',
+        'The limit of the rebuttal, stated plainly: a verifier that parses ' +
+        'the IMA log can reconstruct state too, and this approach equally ' +
+        'needs its measurement list. The claim is that the root is ' +
+        'comparable, not that IMA cannot get there.'
+      ]
+    },
+    {
+      verdict: 'answered', label: 'answered',
+      claim: 'An SBOM already lists packages with their hashes.',
+      body: [
+        'It does, and the measurement document here is close to being one. ' +
+        'The difference is what is done with it. An SBOM is a claim by ' +
+        'whoever built the image, with nothing binding it to a device and ' +
+        'nothing making it append-only. The addition is the log and the PCR ' +
+        'binding, not the inventory.'
+      ]
+    },
+    {
+      verdict: 'answered', label: 'answered, for the log',
+      claim: 'This will not scale.',
+      body: [
+        'Publishing a third image added exactly one leaf and reused 2,130. ' +
+        'The log grows by the delta between builds, not by the size of each ' +
+        'image.',
+        'What does not scale is the absence argument. This page proves ' +
+        'absence by holding every leaf, which is fine at 2,132 records and ' +
+        'not at a million.'
+      ]
+    },
+    {
+      verdict: 'conceded', label: 'conceded',
+      claim: 'Why not build this on Rekor?',
+      body: [
+        'Reasonable. Sigstore\'s Rekor is a mature transparency log built ' +
+        'for this shape of problem, with Mozilla\'s Binary Transparency work ' +
+        'behind it. The log here is a demonstration, not a proposal.',
+        'What is being proposed is the leaf semantics \u2014 a package ' +
+        'measurement as a reference value, scoped to an image line \u2014 and ' +
+        'those could sit on Rekor perfectly well.'
+      ]
+    },
+    {
+      verdict: 'conceded', label: 'conceded, and it points somewhere better',
+      claim: 'CoRIM already carries per-component reference values.',
+      body: [
+        'It does, and it is deployed: CoRIM and CoMID reference measurements ' +
+        'ship per firmware component today. But a component there is one of ' +
+        'a handful of blobs \u2014 root-of-trust firmware, accelerator firmware. ' +
+        'Nobody is doing this at 2,131 packages inside a single Linux image.',
+        'So this is not a refutation so much as the right implementation ' +
+        'target. The argument is about granularity, not about needing a new ' +
+        'format.'
+      ]
+    }
+  ];
+
+  var SOURCES = [
+    ['IMA concepts, on order-dependent PCR extends',
+     'https://ima-doc.readthedocs.io/en/latest/ima-concepts.html'],
+    ['On the TOCTOU Problem in Remote Attestation (ACM CCS 2021)',
+     'https://dl.acm.org/doi/abs/10.1145/3460120.3484532'],
+    ['Remote Attestation: A Literature Review',
+     'https://arxiv.org/pdf/2105.02466'],
+    ['TCG Guidance on Integrity Measurements and Event Log Processing',
+     'https://trustedcomputinggroup.org/wp-content/uploads/TCG-Guidance-Integrity-Measurements-Event-Log-Processing_v1_r0p118_24feb2022-1.pdf'],
+    ['Sigstore Rekor', 'https://github.com/sigstore/rekor'],
+    ['NVIDIA CoRIM-based reference measurement sharing',
+     'https://networking-docs.nvidia.com/dpunicattestation/']
+  ];
+
+  function renderObjections(r) {
+    clear(view);
+    view.appendChild(el('p', 'eyebrow', 'arguments against this approach'));
+    view.appendChild(el('p', 'thesis',
+      'Three of these have no answer.'));
+
+    view.appendChild(el('p', 'prose',
+      'Everything on this page is argument rather than arithmetic, so it is ' +
+      'set in the asserting typeface throughout \u2014 nothing below was computed ' +
+      'by your browser. The objections are stated in the strongest form ' +
+      'found for them, and the ones with no rebuttal are marked as having ' +
+      'none.'));
+
+    ['stands', 'answered', 'conceded'].forEach(function (group) {
+      var heading = { stands: 'Objections that stand',
+                      answered: 'Objections with an answer',
+                      conceded: 'Objections that are simply right' }[group];
+      view.appendChild(el('h2', null, heading));
+
+      OBJECTIONS.filter(function (o) { return o.verdict === group; })
+        .forEach(function (o) {
+          var box = el('div', 'objection is-' + o.verdict);
+          var head = el('div', 'objection-head');
+          head.appendChild(el('div', 'objection-claim', o.claim));
+          head.appendChild(el('div', 'verdict-tag is-' + o.verdict, o.label));
+          box.appendChild(head);
+          o.body.forEach(function (para) {
+            box.appendChild(el('p', 'prose', para));
+          });
+          view.appendChild(box);
+        });
+    });
+
+    view.appendChild(el('h2', null, 'The line through all of it'));
+    view.appendChild(el('p', 'prose',
+      'Every objection that lands is a version of "what is happening on ' +
+      'that machine right now". Every one that misses is a version of "what ' +
+      'changed between two builds". This is built for the second question, ' +
+      'and is worth exactly nothing against the first.'));
+
+    view.appendChild(el('h2', null, 'Sources'));
+    var list = el('div', 'filelist');
+    SOURCES.forEach(function (s) {
+      var a = el('a', 'filerow', s[0]);
+      a.href = s[1];
+      a.setAttribute('rel', 'noopener noreferrer');
+      list.appendChild(a);
+    });
+    view.appendChild(list);
+    view.appendChild(el('p', 'prose dim',
+      'These links leave the page and will not resolve from the offline ' +
+      'copy.'));
+
+    var back = el('p', 'prose');
+    var l1 = el('a', null, 'What this page does not prove');
+    l1.href = '#/limits';
+    back.appendChild(l1);
+    back.appendChild(document.createTextNode(' \u00b7 '));
+    var l2 = el('a', null, 'Back to the verification');
+    l2.href = '#/';
+    back.appendChild(l2);
+    view.appendChild(back);
+  }
+
   // ------------------------------------------------------------- impact view
   /* Compare the image an assessment names against another image, and report
    * what moved.
@@ -1681,6 +1882,7 @@
       else if (hash === '#/stats') renderStats(verified);
       else if (hash === '#/assessment') renderAssessment(verified);
       else if (hash === '#/impact') renderImpact(verified);
+      else if (hash === '#/objections') renderObjections(verified);
       else if ((m = hash.match(/^#\/hash\/(.*)$/))) {
         renderHash(verified, decodeURIComponent(m[1]));
       } else if ((m = hash.match(/^#\/pkg\/([^?]*)(?:\?build=([A-Za-z0-9._-]+))?$/))) {
