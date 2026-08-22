@@ -20,7 +20,7 @@ published. Demo plan: `../demo.md` (Demo A). Formats and trust model:
 | `site-dist/` (gitignored) | generated bundle — `make site` |
 | `tools/` | `vendor_crypto.py` (build the vendored crypto), `parity.js` (JS vs Python), `verify-bundle.js` (check a bundle the way a browser does), `render-check.js` (run the page against a minimal DOM), `make_example_assessment.py` |
 | `assessments/` | assessment-scope documents — currently one **worked example**, not a real audit |
-| `build-image.sh {A\|B\|C}` | build the demo images (B: dropbear 2026.91, never published; C: a later build giving the log a second tree head) |
+| `build-image.sh {A\|B\|C\|D}` | build the demo images (B: dropbear 2026.91, never published; C: a later build giving the log a second tree head; D: first with the `(unowned)` leaf) |
 | `demo/` | per-beat frame scripts, env |
 | `sim/` | hardware-free path: synthetic evidence bundles, laptop swtpm, e2e |
 | `tests/` | pytest (merkle vectors, bash canary, quote, log, e2e frames) |
@@ -237,10 +237,13 @@ and three of them stand:
   remote attestation is described in the literature as unsolved. This
   addresses substitution in the supply chain, not compromise of a running
   system.
-- **Files no package owns are invisible.** `/etc/passwd`, `/etc/shadow`,
-  `/etc/ld.so.cache` and 22 others are in no leaf, so in no device root, so
-  in no PCR. Adding a root user changes nothing this commits to. That is a
-  way through, not a rough edge, and it is not yet closed.
+- ~~**Files no package owns are invisible.**~~ **Closed from image D.** One
+  further leaf, `(unowned)`, measures every regular file no package claims —
+  `/etc/passwd`, `/etc/shadow`, `/etc/ld.so.cache`, the indexes `depmod`
+  writes. Coverage of regular files went from **99.34% to 99.84%**; the
+  6 remaining are the 3 that change every boot or build
+  (`machine-id`, `version`, `timestamp`) and the 3 the measurement pass
+  writes itself. The page reports this per build, computed.
 - **One log with one key is not Certificate Transparency.** What publication
   buys is detectability of divergence — not a correct build.
 

@@ -35,6 +35,39 @@ Rules:
 - Leaves measure INSTALLED state: postinst-modified files hash as-installed.
 - `leaf_hash = sha256(preimage_bytes)` (plain; preimages are self-labeled).
 
+### 1a. The unowned-files leaf
+
+Every regular file in the image that no package claims is covered by one
+further leaf, so that nothing in the rootfs sits outside the device root.
+Without it `/etc/passwd`, `/etc/shadow`, `/etc/ld.so.cache` and the indexes
+`depmod` writes are in no leaf, therefore no root, therefore no PCR — and
+adding a root user would change nothing the mechanism commits to.
+
+It is an ordinary `pkg-leaf-v1`, not a new format:
+
+```
+name=(unowned)   version=1.0   arch=all
+```
+
+- The name is one no opkg package can have (opkg names cannot contain
+  parentheses), so it cannot collide, and `(` is 0x28 — below every letter
+  and digit — so it sorts first under the §2 ordering with no special rule.
+- Metadata is constant so the leaf is a pure function of the file set: two
+  builds whose unowned files match produce one leaf and deduplicate in the
+  log, exactly as an unchanged package does.
+- File set: every regular, non-symlink file not claimed by a package, minus
+  `PKG_MEASUREMENTS_EXCLUDE` and minus anything under
+  `${PKG_MEASUREMENTS_ROOTFS_DIR}` — the agent inputs, which cannot be
+  measured by the pass that writes them.
+- Because it is an ordinary leaf, the on-device agent, `canonical.py`,
+  `verify.js` and `publish.py` need no special case: it arrives through
+  `pkgs.tsv`/`files.tsv` and the `packages` array like anything else.
+
+Excluded by `PKG_MEASUREMENTS_EXCLUDE` and therefore still measured by
+nothing: `/etc/machine-id`, `/etc/version`, `/etc/timestamp`. They change
+every boot or every build, so measuring them would make the root unstable
+rather than meaningful. A deliberate, named gap.
+
 ## 2. Device tree — `pkg-merkle-v1`
 
 - Leaf order: ascending bytewise sort of package name (unique per image).

@@ -1,7 +1,10 @@
 #!/bin/bash
-# build-image.sh {A|B|C} — build the OCP-2026 demo images.
+# build-image.sh {A|B|C|D} — build the OCP-2026 demo images.
 #   A: baseline image (dropbear 2026.92), package-aware measurement enabled.
 #   B: identical except dropbear pinned back to 2026.91. Never published.
+#   D: first build carrying the (unowned) leaf, so that files no package
+#      claims -- /etc/passwd, /etc/shadow, ld.so.cache -- are inside the
+#      device root. Published.
 #   C: a later build of the same line (new BUILD_ID). Published, so the log
 #      gets a second signed tree head — consistency proofs need two. C must
 #      never alter A or B: their artifacts are already copied into
@@ -14,13 +17,14 @@
 set -e
 
 VARIANT="${1:-}"
-case "$VARIANT" in A|B|C) ;; *) echo "usage: $0 {A|B|C}" >&2; exit 2 ;; esac
+case "$VARIANT" in A|B|C|D) ;; *) echo "usage: $0 {A|B|C|D}" >&2; exit 2 ;; esac
 
 # BUILD_ID pins os-release's BUILD_ID (a measured file). C uses a distinct one
 # so it is a genuinely different build of the same source.
 case "$VARIANT" in
     A|B) BUILD_ID_VAL="ocp2026-demo" ;;
     C)   BUILD_ID_VAL="ocp2026-demo-c" ;;
+    D)   BUILD_ID_VAL="ocp2026-demo-d" ;;
 esac
 
 # DEMO_ROOT = parent of this script's dir (works from any clone location);

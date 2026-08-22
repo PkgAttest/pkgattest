@@ -750,3 +750,56 @@ def test_real_example_assessment_is_generated_reproducibly(tmp_path):
     names = {e["name"] for e in a["examined"]}
     assert "dropbear" in names
     assert "os-release" not in names
+
+
+def test_unowned_leaf_covers_the_files_no_package_claims(tmp_path):
+    """Image D's whole reason for existing: /etc/passwd and friends are
+    inside the device root, so changing them changes what PCR 14 commits to."""
+    doc_path = os.path.join(
+        REAL_ART, "D", "obmc-phosphor-image-raspberrypi3-64.pkg-measurements.json")
+    if not os.path.exists(doc_path):
+        pytest.skip("image D is not built")
+    doc = canonical.load_measurements_json(doc_path)
+
+    # It is an ordinary leaf: the drift gate and the root need no special case.
+    assert canonical.verify_measurements_doc(doc) == []
+    names = [p["name"] for p in doc["packages"]]
+    assert names == sorted(names)
+    assert names[0] == "(unowned)", "the leaf must sort first, with no rule"
+
+    (u,) = [p for p in doc["packages"] if p["name"] == "(unowned)"]
+    assert u["version"] == "1.0" and u["arch"] == "all", (
+        "constant metadata, so the leaf is a pure function of the file set")
+
+    covered = {f["path"] for f in u["files"]}
+    for path in ("/etc/passwd", "/etc/shadow", "/etc/group", "/etc/gshadow",
+                 "/etc/ld.so.cache", "/etc/ssl/certs/ca-certificates.crt"):
+        assert path in covered, "%s is still outside every leaf" % path
+
+    # The residue is only what is excluded on purpose.
+    for path in ("/etc/machine-id", "/etc/version", "/etc/timestamp"):
+        assert path not in covered
+    assert not any(f["path"].startswith("/usr/share/pkg-integrity/")
+                   for f in u["files"]), (
+        "the measurement pass cannot measure its own output")
+
+
+def test_unowned_leaf_is_a_pure_function_of_its_files(tmp_path):
+    """No timestamp or build id in the metadata, so two builds with the same
+    unowned files produce one leaf and deduplicate in the log."""
+    import hashlib
+    doc_path = os.path.join(
+        REAL_ART, "D", "obmc-phosphor-image-raspberrypi3-64.pkg-measurements.json")
+    if not os.path.exists(doc_path):
+        pytest.skip("image D is not built")
+    doc = canonical.load_measurements_json(doc_path)
+    (u,) = [p for p in doc["packages"] if p["name"] == "(unowned)"]
+
+    rebuilt = canonical.PkgLeaf(
+        u["name"], u["version"], u["arch"],
+        [(f["path"], f["sha256"]) for f in u["files"]])
+    assert rebuilt.leaf_hash() == u["leaf_hash"]
+
+    pre = rebuilt.preimage().decode()
+    assert pre.startswith("pkg-leaf-v1\nname=(unowned)\nversion=1.0\n")
+    assert doc["image_name"] not in pre and doc["timestamp"] not in pre

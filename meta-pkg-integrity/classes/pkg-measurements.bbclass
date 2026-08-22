@@ -18,12 +18,31 @@
 # structurally outside every leaf.  Leaves measure INSTALLED state (postinst-
 # modified files hash as-installed); A/B image parity holds because unchanged
 # packages install bit-identical ipks from the shared deploy/sstate cache.
+#
+# One further leaf, named "(unowned)", covers every regular file in the image
+# that no package claims — /etc/passwd, /etc/shadow, /etc/ld.so.cache, the
+# indexes depmod writes.  Without it those files sit in no leaf, therefore no
+# device root, therefore no PCR, and adding a root user to /etc/passwd would
+# change nothing the mechanism commits to.  It is an ordinary pkg-leaf-v1
+# with a name no opkg package can have (opkg names cannot contain
+# parentheses), so it needs no new format and sorts into place normally:
+# "(" is 0x28, below every letter and digit, so it is always the first leaf.
 
 PKG_MEASUREMENTS_DIR = "${WORKDIR}/pkg-measurements"
 PKG_MEASUREMENTS_PKGLIST = "${PKG_MEASUREMENTS_DIR}/rootfs-packages.json"
-PKG_MEASUREMENTS_EXCLUDE ?= "/etc/machine-id /etc/version"
+# Excluded from every leaf, package or unowned: these change on every boot
+# or every build, so measuring them would make the root unstable rather than
+# meaningful.  This is a deliberate, named gap, not an oversight.
+PKG_MEASUREMENTS_EXCLUDE ?= "/etc/machine-id /etc/version /etc/timestamp"
 PKG_MEASUREMENTS_IMAGE_LINE ?= "rpi3-openbmc"
 PKG_MEASUREMENTS_ROOTFS_DIR ?= "${datadir}/pkg-integrity"
+
+# The unowned-files leaf. Constant metadata so the leaf is a pure function of
+# the file set: two builds whose unowned files match produce the same leaf and
+# deduplicate in the log, exactly as an unchanged package does.
+PKG_MEASUREMENTS_UNOWNED_NAME ?= "(unowned)"
+PKG_MEASUREMENTS_UNOWNED_VERSION ?= "1.0"
+PKG_MEASUREMENTS_UNOWNED_ARCH ?= "all"
 
 # Collect the installed-package list while the opkg DB still exists
 # (do_rootfs removes it right after ROOTFS_POSTUNINSTALL_COMMAND runs;
@@ -135,6 +154,54 @@ fakeroot python do_pkg_measurements() {
         bb.warn("pkg-measurements: no pkgdata for %d packages (measured with "
                 "empty file list): %s" % (len(missing_pkgdata),
                                           " ".join(missing_pkgdata[:10])))
+
+    # ---- the files no package owns --------------------------------------
+    # Walked before the agent inputs below are written, so those three files
+    # do not exist yet; the on-device agent must skip that directory
+    # explicitly, since by then they do.
+    owned = set()
+    for p in packages:
+        for e in p["files"]:
+            owned.add(e["path"])
+    share_rel = d.getVar("PKG_MEASUREMENTS_ROOTFS_DIR")
+
+    unowned = []
+    for dirpath, dirnames, filenames in os.walk(rootfs):
+        for fn in filenames:
+            full = os.path.join(dirpath, fn)
+            path = "/" + os.path.relpath(full, rootfs)
+            if path in owned or path in exclude:
+                continue
+            if path == share_rel or path.startswith(share_rel + "/"):
+                continue
+            st = os.lstat(full)
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            if "\n" in path or "\t" in path:
+                bb.fatal("pkg-measurements: newline/tab in unowned path %r"
+                         % path)
+            unowned.append((path, sha256_file(full)))
+
+    u_name = d.getVar("PKG_MEASUREMENTS_UNOWNED_NAME")
+    u_ver = d.getVar("PKG_MEASUREMENTS_UNOWNED_VERSION")
+    u_arch = d.getVar("PKG_MEASUREMENTS_UNOWNED_ARCH")
+    u_lines = sorted("%s %s" % (p, h) for p, h in unowned)
+    u_preimage = "pkg-leaf-v1\nname=%s\nversion=%s\narch=%s\nfiles=%d\n" % (
+        u_name, u_ver, u_arch, len(u_lines)) + "".join(
+        l + "\n" for l in u_lines)
+    packages.append({
+        "name": u_name,
+        "version": u_ver,
+        "arch": u_arch,
+        "leaf_hash": hashlib.sha256(u_preimage.encode("utf-8")).hexdigest(),
+        "files": [{"path": p, "sha256": h} for p, h in
+                  sorted(unowned, key=lambda x: x[0])],
+    })
+    bb.plain("pkg-measurements: %d files owned by no package" % len(unowned))
+
+    # pkg-merkle-v1 wants leaves in bytewise name order, and "(unowned)"
+    # sorts ahead of every package name.
+    packages.sort(key=lambda p: p["name"])
 
     root = pkg_measurements_merkle_root([p["leaf_hash"] for p in packages])
     bb.plain("pkg-measurements: %d packages, merkle root %s" %

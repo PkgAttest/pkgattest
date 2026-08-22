@@ -821,8 +821,10 @@
     var logIndex = r.byLeafHash[recordHex];
     var inLog = logIndex !== undefined;
 
+    var isUnowned = row[0] === UNOWNED_NAME;
     view.appendChild(el('p', 'eyebrow',
-      'package \u00b7 build ' + b.meta.label + ' \u00b7 ' + b.meta.image_line));
+      (isUnowned ? 'files no package owns' : 'package') +
+      ' \u00b7 build ' + b.meta.label + ' \u00b7 ' + b.meta.image_line));
     var title = el('p', 'thesis');
     title.appendChild(document.createTextNode(row[0] + ' ' + row[1]));
     view.appendChild(title);
@@ -834,11 +836,23 @@
       : 'Not present at tree size ' + group(snap.tree_size);
     view.appendChild(verdict);
 
+    if (isUnowned) {
+      view.appendChild(el('p', 'prose',
+        'Not a package. This leaf covers every regular file in the image ' +
+        'that no package claims \u2014 /etc/passwd, /etc/shadow, ' +
+        '/etc/ld.so.cache, the indexes depmod writes \u2014 so that nothing ' +
+        'in the rootfs sits outside the device root, and therefore outside ' +
+        'PCR 14. It is an ordinary pkg-leaf-v1 with a name no opkg package ' +
+        'can have, which is why it needed no new format anywhere.'));
+    }
+
     // --- 1. the preimage ---
     view.appendChild(el('h2', null, 'One \u2014 what was measured'));
     view.appendChild(el('p', 'prose dim',
-      'The pkg-leaf-v1 preimage: this package\'s identity and the digest of ' +
-      'every file it installs. ' + group(preimage.length) + ' bytes.'));
+      'The pkg-leaf-v1 preimage: ' + (isUnowned
+        ? 'the identity of this leaf and the digest of every file it covers. '
+        : 'this package\'s identity and the digest of every file it ' +
+          'installs. ') + group(preimage.length) + ' bytes.'));
     var pre = el('pre', 'bytes');
     var text = new TextDecoder().decode(preimage);
     var lines = text.split('\n');
@@ -1318,6 +1332,74 @@
    *
    * The three marked "stands" are not softened. A project that lists only
    * the objections it can rebut has published an advertisement. */
+  var UNOWNED_NAME = '(unowned)';
+
+  /* Which builds carry the leaf that covers files no package owns. */
+  function unownedCoverage(r) {
+    return r.builds.map(function (b) {
+      var found = null;
+      if (b.pkgs) {
+        b.pkgs.forEach(function (row, i) {
+          if (row[0] === UNOWNED_NAME) {
+            found = { count: row[4], leaf: b.leafHexes[i] };
+          }
+        });
+      }
+      return { label: b.meta.label, covered: !!found,
+               count: found ? found.count : 0 };
+    });
+  }
+
+  function objections(r) {
+   var cov = unownedCoverage(r);
+   var have = cov.filter(function (c) { return c.covered; });
+   var lack = cov.filter(function (c) { return !c.covered; });
+
+   var unownedVerdict = have.length
+     ? { verdict: 'answered',
+         label: lack.length ? 'closed, from image ' + have[0].label
+                            : 'closed',
+         body: [
+           'It was true, and it was a way through rather than a rough edge: ' +
+           'files no package claims sat in no leaf, so no device root, so no ' +
+           'PCR, and adding a root user to /etc/passwd changed nothing the ' +
+           'mechanism committed to.',
+           'It is now covered by one further leaf, named "(unowned)", which ' +
+           'measures every regular file no package claims. It is an ordinary ' +
+           'pkg-leaf-v1 with a name no opkg package can have, so it needed no ' +
+           'new format and no change to the on-device agent, the host ' +
+           'verifier or the log \u2014 it arrives like any other leaf and is ' +
+           'published like any other leaf.',
+           'In this snapshot: ' + (have.map(function (c) {
+             return 'image ' + c.label + ' covers ' + group(c.count) +
+                    ' such files';
+           }).join(', ')) + (lack.length
+             ? '; ' + lack.map(function (c) { return 'image ' + c.label; })
+                 .join(', ') + ' predate' + (lack.length === 1 ? 's' : '') +
+               ' the change and remain uncovered.'
+             : '.'),
+           'Three files stay outside every leaf on purpose: /etc/machine-id, ' +
+           '/etc/version and /etc/timestamp change on every boot or every ' +
+           'build, so measuring them would make the root unstable rather ' +
+           'than meaningful. That is a named gap, not an oversight.'
+         ] }
+     : { verdict: 'stands', label: 'no answer',
+         body: [
+           'Regular files in the built image owned by no package \u2014 ' +
+           '/etc/passwd, /etc/shadow, /etc/ld.so.cache, the kernel module ' +
+           'indexes depmod writes \u2014 are in no package leaf, so in no device ' +
+           'root, so in no PCR.',
+           'Adding a root user to /etc/passwd changes nothing this mechanism ' +
+           'commits to. That is not a rough edge, it is a way through.'
+         ] };
+
+   return OBJECTIONS.map(function (o) {
+     if (o.id !== 'unowned') return o;
+     return { id: o.id, claim: o.claim, verdict: unownedVerdict.verdict,
+              label: unownedVerdict.label, body: unownedVerdict.body };
+   });
+  }
+
   var OBJECTIONS = [
     {
       verdict: 'stands', label: 'no answer',
@@ -1336,18 +1418,10 @@
       ]
     },
     {
+      id: 'unowned',
       verdict: 'stands', label: 'no answer',
       claim: 'Files that belong to no package are invisible to it.',
-      body: [
-        '25 regular files in the built image are owned by no package: ' +
-        '/etc/passwd, /etc/shadow, /etc/ld.so.cache, the kernel module ' +
-        'indexes depmod writes, and three written by the measurement pass ' +
-        'itself. None is in any package leaf, so none is in the device root, ' +
-        'so none is in PCR 14.',
-        'Adding a root user to /etc/passwd changes nothing this mechanism ' +
-        'commits to. That is not a rough edge, it is a way through. Closing ' +
-        'it needs a leaf covering unowned files, and that has not been built.'
-      ]
+      body: ['(computed per build)']
     },
     {
       verdict: 'stands', label: 'no answer',
@@ -1448,9 +1522,13 @@
 
   function renderObjections(r) {
     clear(view);
+    var live = objections(r);
+    var standing = live.filter(function (o) { return o.verdict === 'stands'; });
+
     view.appendChild(el('p', 'eyebrow', 'arguments against this approach'));
     view.appendChild(el('p', 'thesis',
-      'Three of these have no answer.'));
+      standing.length === 1 ? 'One of these has no answer.'
+                            : standing.length + ' of these have no answer.'));
 
     view.appendChild(el('p', 'prose',
       'Everything on this page is argument rather than arithmetic, so it is ' +
@@ -1465,7 +1543,7 @@
                       conceded: 'Objections that are simply right' }[group];
       view.appendChild(el('h2', null, heading));
 
-      OBJECTIONS.filter(function (o) { return o.verdict === group; })
+      live.filter(function (o) { return o.verdict === group; })
         .forEach(function (o) {
           var box = el('div', 'objection is-' + o.verdict);
           var head = el('div', 'objection-head');
@@ -1799,6 +1877,33 @@
     w.appendChild(stat('their share of files',
       group(kernelFiles) + ' / ' + group(totalFiles)));
     view.appendChild(w);
+
+    view.appendChild(el('h2', null, 'Files no package owns'));
+    var cov = unownedCoverage(r);
+    var haveCov = cov.filter(function (c) { return c.covered; });
+    if (haveCov.length) {
+      view.appendChild(el('p', 'prose',
+        'Some regular files in an image are claimed by no package at all: ' +
+        '/etc/passwd, /etc/shadow, /etc/ld.so.cache, the indexes depmod ' +
+        'writes. They are covered by one further leaf so that nothing in the ' +
+        'rootfs sits outside the device root.'));
+      var cs = el('div', 'stats');
+      cov.forEach(function (c) {
+        cs.appendChild(stat('build ' + c.label,
+          c.covered ? group(c.count) : 'not covered',
+          c.covered ? 'files no package claims, inside the device root'
+                    : 'built before the (unowned) leaf existed'));
+      });
+      view.appendChild(cs);
+      view.appendChild(el('p', 'prose dim',
+        '/etc/machine-id, /etc/version and /etc/timestamp stay outside every ' +
+        'leaf deliberately: they change on every boot or every build, so ' +
+        'measuring them would make the root unstable rather than meaningful.'));
+    } else {
+      view.appendChild(el('p', 'prose',
+        'No build in this snapshot carries the (unowned) leaf, so files ' +
+        'claimed by no package are outside every measurement here.'));
+    }
 
     view.appendChild(el('h2', null, 'Packages that constrain nothing'));
     view.appendChild(el('p', 'prose',

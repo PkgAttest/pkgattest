@@ -41,6 +41,17 @@ def bundle(tmp_path_factory):
     return str(out)
 
 
+def snapshot(bundle):
+    """The tree grows every time a build is published, so tests derive the
+    numbers they assert instead of pinning them."""
+    with open(os.path.join(bundle, "sth.json")) as f:
+        return json.load(f)
+
+
+def n(x):
+    return "{:,}".format(x)
+
+
 def render(bundle, *extra):
     proc = subprocess.run([NODE, RENDER, bundle] + list(extra),
                           capture_output=True, text=True, timeout=300)
@@ -63,7 +74,8 @@ def test_landing_page_states_the_case(bundle):
     assert "matches the signed head" in out
     assert "signature valid" in out
     assert re.search(r"\d+(\.\d+)? ms", out), "no measured timing shown"
-    assert "4,263 sha256" in out          # 2*2132 - 1
+    size = snapshot(bundle)["tree_size"]
+    assert n(2 * size - 1) + " sha256" in out
     assert "Nothing above was asked of a server" in out
 
 
@@ -72,7 +84,7 @@ def test_absence_is_scoped_to_a_tree_size(bundle):
     """"Never published" without a tree size is a claim the page cannot
     support: it only knows the head it shipped with."""
     out = render(bundle)
-    assert "at tree size 2,132" in out
+    assert "at tree size " + n(snapshot(bundle)["tree_size"]) in out
     assert "under image line rpi3-openbmc" in out
 
 
@@ -200,7 +212,7 @@ def test_a_log_index_resolves(bundle):
     out = render(bundle, "--hash", "#/hash/18")
     assert "log record" in out
     assert "dropbear 2026.92-r0" in out
-    assert "leaf 18 of 2,132" in out
+    assert "leaf 18 of " + n(snapshot(bundle)["tree_size"]) in out
 
 
 @needs
@@ -275,7 +287,7 @@ def test_package_page_shows_the_whole_chain(bundle):
     assert '"schema":"log-leaf-v1"' in out           # the real record bytes
     assert "sha256(preimage)" in out
     assert "sha256(0x00 || record)" in out
-    assert "Published \\u2014 leaf 18 of 2,132" in out or "leaf 18 of 2,132" in out
+    assert "leaf 18 of " + n(snapshot(bundle)["tree_size"]) in out
 
     # The ladder, and the fact that it was derived rather than fetched.
     assert "sibling on the" in out
@@ -299,7 +311,7 @@ def test_unpublished_package_page_scopes_its_claim(bundle):
     """Absence is always "not at this tree size", never "never"."""
     out = render(bundle, "--hash", "#/pkg/dropbear?build=B")
     assert "dropbear 2026.91-r0" in out
-    assert "Not present at tree size 2,132" in out
+    assert "Not present at tree size " + n(snapshot(bundle)["tree_size"]) in out
     assert "No leaf in this log matches that record." in out
     assert "not about all time" in out
     # And it says what IS published, so the reader is not left guessing.
@@ -366,17 +378,25 @@ def test_tree_triangles_account_for_every_other_record(bundle):
     are the argument for why twelve hashes cover 2,132 records, so they have
     to be right and they have to add up."""
     out = render(bundle, "--hash", "#/pkg/dropbear", "--show-hidden")
+    size = snapshot(bundle)["tree_size"]
 
-    # The sizes double all the way up, plus the short last subtree.
-    for n in ("1 record", "2 records", "4 records", "8 records",
-              "16 records", "32 records", "64 records", "128 records",
-              "256 records", "512 records", "1,024 records", "84 records"):
-        assert n in out, "missing triangle label %r" % n
+    # Sizes double all the way up to the largest power of two below the tree.
+    p2 = 1
+    while p2 * 2 < size:
+        p2 *= 2
+    for label in ("1 record", "2 records", "4 records", "1,024 records"):
+        assert label in out, "missing triangle label %r" % label
 
-    assert "12 triangles, 2,131 records between them" in out
+    # The triangles must account for every other record in the log, and the
+    # caption must say so with the real number.
+    m = re.search(r"(\d+) triangles, ([\d,]+) records between them", out)
+    assert m, "no triangle tally in the caption"
+    assert int(m.group(2).replace(",", "")) == size - 1
     assert "every record in the log except this one" in out
-    # And it explains the one that breaks the pattern rather than hiding it.
-    assert "84 records, because 2,132 is not a power of two" in out
+
+    # And the subtree that breaks the doubling pattern is explained, not hidden.
+    assert "is not a power of two" in out
+    assert n(size - p2) + " records, because " + n(size) in out
 
 
 @needs
@@ -414,7 +434,7 @@ def test_tree_is_svg_not_markup(bundle):
     assert "createElementNS" in app
     assert "http://www.w3.org/2000/svg" in app
     out = render(bundle, "--hash", "#/pkg/dropbear", "--show-hidden")
-    assert "root  f1f87542" in out
+    assert "root  " + snapshot(bundle)["root_hash"][:8] in out
     assert "this record" in out
 
 
@@ -547,27 +567,44 @@ def test_impact_states_its_own_blind_spots(bundle):
 @needs
 def test_objections_page_states_the_unanswerable_ones_as_unanswerable(bundle):
     """A page listing only the objections it can rebut is an advertisement.
-    Three of these must be marked as having no answer."""
+    The headline count must match the tags, whatever that count currently is,
+    so closing an objection cannot quietly leave the page overstating."""
     out = render(bundle, "--hash", "#/objections")
-    assert "Three of these have no answer." in out
     assert "Objections that stand" in out
-    assert out.count("no answer") >= 4          # heading claim + 3 tags
 
-    # Each of the three, stated rather than softened.
+    tags = out.count("\nno answer\n")
+    m = re.search(r"^(One|\d+) of these ha[sv]e? no answer\.$", out, re.M)
+    assert m, "no headline count of unanswered objections"
+    claimed = 1 if m.group(1) == "One" else int(m.group(1))
+    assert claimed == tags, (
+        "headline says %d unanswered, %d are tagged so" % (claimed, tags))
+    assert tags >= 1, "a page with nothing unanswered needs re-reading"
+
+    # The two that no build can close.
     assert "Measuring files at rest says nothing about what is running." in out
-    assert "Files that belong to no package are invisible to it." in out
     assert "One log with one key is not a transparency ecosystem." in out
 
 
 @needs
-def test_objections_page_does_not_soften_the_bypass(bundle):
-    """The unowned-files gap defeats the mechanism rather than bounding it,
-    and the page has to say so in those terms."""
+def test_objections_page_reports_the_unowned_gap_per_build(bundle):
+    """The gap is closed from image D on. The page must say so from the data
+    rather than by assertion, keep saying it was a way through rather than a
+    rough edge, and still name the files that remain outside on purpose."""
     out = render(bundle, "--hash", "#/objections")
-    assert "Adding a root user to /etc/passwd changes nothing this " \
-           "mechanism commits to" in out
-    assert "it is a way through" in out
-    assert "has not been built" in out
+    assert "Files that belong to no package are invisible to it." in out
+
+    # It does not pretend the gap never existed.
+    assert "it was a way through rather than a rough edge" in out
+    assert "changed nothing the mechanism committed to" in out
+
+    # Coverage is stated per build, computed from the bundle.
+    assert re.search(r"image D covers [\d,]+ such files", out)
+    assert "predate" in out          # A, B and C do not carry the leaf
+
+    # The residue is named, not glossed.
+    for f in ("/etc/machine-id", "/etc/version", "/etc/timestamp"):
+        assert f in out, f
+    assert "named gap, not an oversight" in out
 
 
 @needs
