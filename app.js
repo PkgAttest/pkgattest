@@ -193,7 +193,65 @@
     });
 
     out.index = index;
+    out.assessments = (D.assessments || []).map(function (a) {
+      return analyseAssessment(a, out.builds);
+    });
     return out;
+  }
+
+  /* Compare an assessment's stated scope against what each build actually
+   * contains.
+   *
+   * Three buckets, not two, and the middle one is the whole point:
+   *
+   *   examined    this exact measurement was in the assessed image -- the
+   *               artefact reviewed and the artefact running are the same
+   *               bytes.
+   *   rebuilt     the package NAME was in the review, but this build of it
+   *               is not the one that was reviewed. The review looked at
+   *               this area and its conclusions do not carry over to these
+   *               bytes.
+   *   outside     the package was never in the review's scope at all.
+   *
+   * Joining on the leaf hash rather than on name+version is what makes the
+   * middle bucket possible. Two builds of "dropbear 2026.92" with different
+   * patches produce different leaves; only the leaf says whether the thing
+   * reviewed is the thing present. */
+  function analyseAssessment(a, builds) {
+    var byLeaf = {}, byName = {};
+    (a.examined || []).forEach(function (e) {
+      byLeaf[e.pkg_leaf_hash] = e;
+      byName[e.name] = e;
+    });
+
+    var perBuild = builds.map(function (b) {
+      var r = { build: b.meta, examined: [], rebuilt: [], outsideCount: 0,
+                isSubject: b.meta.device_root === a.subject.device_root };
+      if (!b.pkgs) return r;
+      b.pkgs.forEach(function (row, i) {
+        var leaf = b.leafHexes[i];
+        if (byLeaf[leaf]) r.examined.push({ name: row[0], version: row[1] });
+        else if (byName[row[0]]) {
+          r.rebuilt.push({ name: row[0], version: row[1],
+                           reviewedVersion: byName[row[0]].version });
+        } else r.outsideCount++;
+      });
+      return r;
+    });
+
+    return { doc: a, byLeaf: byLeaf, byName: byName, builds: perBuild };
+  }
+
+  /* Where one package sits relative to every assessment in the bundle. */
+  function assessmentStanding(r, name, leafHex) {
+    return r.assessments.map(function (an) {
+      if (an.byLeaf[leafHex]) return { a: an.doc, state: 'examined' };
+      if (an.byName[name]) {
+        return { a: an.doc, state: 'rebuilt',
+                 reviewedVersion: an.byName[name].version };
+      }
+      return { a: an.doc, state: 'outside' };
+    });
   }
 
   // ----------------------------------------------------------------- lookup
@@ -445,7 +503,12 @@
     slink.href = '#/stats';
     more.appendChild(slink);
     more.appendChild(document.createTextNode(
-      ' \u2014 coverage, and where the weight actually is.'));
+      ' \u2014 coverage, and where the weight actually is. '));
+    var alink = el('a', null, 'Security assessment');
+    alink.href = '#/assessment';
+    more.appendChild(alink);
+    more.appendChild(document.createTextNode(
+      ' \u2014 what an audit can and cannot say about what you are running.'));
     view.appendChild(more);
   }
 
@@ -862,6 +925,36 @@
       void others;
     }
 
+    // Where this exact measurement sits relative to any assessment.
+    var standing = assessmentStanding(r, row[0], leafHex);
+    if (standing.length) {
+      view.appendChild(el('h2', null, 'Security assessment'));
+      standing.forEach(function (st) {
+        var box = el('div', st.state === 'rebuilt' ? 'named' : 'keybox');
+        if (st.state === 'examined') {
+          box.appendChild(el('p', 'prose',
+            'This exact measurement is named as examined by ' +
+            st.a.issuer.name + '. The artefact reviewed and the artefact ' +
+            'here are the same bytes.'));
+        } else if (st.state === 'rebuilt') {
+          box.appendChild(el('div', null,
+            'Inside the reviewed area, but not the reviewed build.'));
+          box.appendChild(el('span', 'named-scope',
+            st.a.issuer.name + ' examined ' + row[0] + ' ' +
+            st.reviewedVersion + '. This is ' + row[1] + ', a different ' +
+            'measurement, so the review\'s conclusions do not carry over ' +
+            'to these bytes.'));
+        } else {
+          box.appendChild(el('p', 'prose dim',
+            'Not in the scope named by ' + st.a.issuer.name + '.'));
+        }
+        if (st.a.illustrative) {
+          box.appendChild(el('p', 'prose dim', st.a.disclaimer));
+        }
+        view.appendChild(box);
+      });
+    }
+
     view.appendChild(el('h2', null, 'Files measured'));
     view.appendChild(el('p', 'prose dim', group(files.length) +
       ' regular files. Every digest below is inside the preimage above.'));
@@ -1044,6 +1137,170 @@
     return card;
   }
 
+  // --------------------------------------------------------- assessment view
+  function renderAssessment(r) {
+    clear(view);
+    view.appendChild(el('p', 'eyebrow', 'security assessment'));
+    view.appendChild(el('p', 'thesis',
+      'An assessment names one hash. A device runs 2,131 packages.'));
+
+    view.appendChild(el('p', 'prose',
+      'An OCP S.A.F.E. Short-Form Report identifies what a Security Review ' +
+      'Provider looked at by a single firmware hash \u2014 ' +
+      'device.fw_hash_sha2_384. For a monolithic root-of-trust image that ' +
+      'describes one artefact fairly. For a Linux BMC image it answers only ' +
+      '"are these bytes identical", and the answer is no as soon as anything ' +
+      'is rebuilt, including things that changed nothing anyone reviewed.'));
+
+    var shape = el('pre', 'bytes');
+    shape.textContent =
+      '"device": {\n' +
+      '  "vendor":            "...",\n' +
+      '  "product":           "...",\n' +
+      '  "fw_version":        "...",\n' +
+      '  "fw_hash_sha2_384":  "..."      <- one hash, and it does not\n' +
+      '}                                    decompose\n' +
+      '"audit": {\n' +
+      '  "srp": "...", "scope_number": 1, "issues": [ ... ]\n' +
+      '}';
+    view.appendChild(shape);
+    view.appendChild(el('p', 'prose dim',
+      'The real schema, with placeholder values. Published reports live in ' +
+      'the OCP-Security-SAFE repository; nothing here is one of them.'));
+
+    if (!r.assessments.length) {
+      view.appendChild(el('p', 'prose',
+        'No assessment scope is carried in this snapshot.'));
+      view.appendChild(backLink());
+      return;
+    }
+
+    r.assessments.forEach(function (an) {
+      var a = an.doc;
+
+      if (a.illustrative) {
+        var warn = el('div', 'caution');
+        warn.appendChild(el('div', 'caution-head', 'Worked example'));
+        warn.appendChild(el('p', 'prose', a.disclaimer));
+        view.appendChild(warn);
+      }
+
+      view.appendChild(el('h2', null, 'What it says'));
+      var meta = el('div', 'keybox');
+      meta.appendChild(el('p', 'prose',
+        'Issued by ' + a.issuer.name + ' on ' + a.issued_at + '. ' +
+        a.review.basis));
+      meta.appendChild(el('p', 'prose dim',
+        'It names its subject by the device merkle root rather than an image ' +
+        'hash. That root commits to all ' + group(a.subject.package_count) +
+        ' package measurements underneath it, so unlike a firmware hash it ' +
+        'can be taken apart \u2014 and it is also the value a BMC extends into ' +
+        'PCR 14, which is what lets the artefact an assessment names and the ' +
+        'artefact a device attests be compared at all.'));
+      meta.appendChild(digest(a.subject.device_root, false));
+      meta.appendChild(el('p', 'prose dim',
+        group((a.examined || []).length) + ' of ' +
+        group(a.subject.package_count) + ' packages named as examined.'));
+      view.appendChild(meta);
+
+      view.appendChild(el('h2', null, 'What that means for each build'));
+      view.appendChild(el('p', 'prose dim',
+        'Joined on the package measurement, not on name and version: two ' +
+        'builds of the same version produce different measurements, and only ' +
+        'the measurement says whether the thing reviewed is the thing here.'));
+
+      an.builds.forEach(function (pb) {
+        var row = el('div', 'build' + (pb.rebuilt.length ? ' is-absent' : ''));
+        row.appendChild(el('div', 'build-label', pb.build.label));
+
+        var mid = el('div');
+        mid.appendChild(el('div', null, pb.isSubject
+          ? 'This is the image the assessment names.'
+          : 'A different image from the one assessed.'));
+        mid.appendChild(el('div', 'build-id', pb.build.build_id));
+        row.appendChild(mid);
+
+        row.appendChild(el('div',
+          'build-verdict ' + (pb.rebuilt.length ? 'is-absent' : 'is-ok'),
+          group(pb.examined.length) + ' examined'));
+
+        if (pb.rebuilt.length) {
+          var named = el('div', 'named');
+          pb.rebuilt.forEach(function (p) {
+            named.appendChild(el('div', null,
+              p.name + ' ' + p.version + '  \u2014  reviewed build was ' +
+              p.reviewedVersion));
+          });
+          named.appendChild(el('span', 'named-scope',
+            pb.rebuilt.length + ' package' +
+            (pb.rebuilt.length === 1 ? ' is' : 's are') +
+            ' inside the reviewed area but not the reviewed build. The ' +
+            'assessment looked here; its conclusions do not carry over to ' +
+            'these bytes.'));
+          row.appendChild(named);
+        }
+        view.appendChild(row);
+      });
+
+      view.appendChild(el('p', 'prose',
+        'That distinction is the argument. A firmware hash can only say ' +
+        'identical or not: every one of these builds would fail it equally, ' +
+        'including the one whose only change was a build identifier. Naming ' +
+        'packages separates a change the review cares about from one it ' +
+        'does not.'));
+    });
+
+    // ---- the vocabulary ----
+    view.appendChild(el('h2', null, 'The same things, in three vocabularies'));
+    view.appendChild(el('p', 'prose dim',
+      'Two rows have no OCP S.A.F.E. term. That gap is what this page is ' +
+      'about.'));
+    var tbl = el('div', 'vocab');
+    [['', 'here', 'OCP S.A.F.E.', 'RATS (RFC 9334)'],
+     ['the BMC', 'device', 'device.product', 'Attester'],
+     ['an image', 'build', 'the artefact behind fw_hash_sha2_384', '--'],
+     ['a package measurement', 'pkg-leaf-v1', '(no term)', 'Reference Value'],
+     ['the log', 'transparency log', '(no term)', 'Reference Value Provider'],
+     ['the checker', 'pkgattest', '--', 'Verifier'],
+     ['the operator', '--', 'Cloud Service Provider', 'Relying Party'],
+     ['who builds it', '--', 'Device Vendor', '--'],
+     ['who reviews it', '--', 'Security Review Provider', '--']
+    ].forEach(function (cols, i) {
+      var vr = el('div', 'vocab-row' + (i === 0 ? ' is-head' : ''));
+      cols.forEach(function (c, j) {
+        vr.appendChild(el('div', j === 0 ? 'vocab-what' : 'vocab-cell', c));
+      });
+      tbl.appendChild(vr);
+    });
+    view.appendChild(tbl);
+
+    view.appendChild(el('h2', null, 'What would close the gap'));
+    view.appendChild(el('p', 'prose',
+      'One field. An SFR already carries a hash of the reviewed artefact; ' +
+      'alongside it, a hash that decomposes:'));
+    var prop = el('pre', 'bytes');
+    prop.textContent =
+      '"device": {\n' +
+      '  "fw_hash_sha2_384": "...",\n' +
+      '  "components": {\n' +
+      '    "manifest_type":         "pkg-measurements-v1",\n' +
+      '    "manifest_hash_sha2_256": "' +
+      r.assessments[0].doc.subject.device_root.slice(0, 24) + '...",\n' +
+      '    "count":                  ' +
+      r.assessments[0].doc.subject.package_count + '\n' +
+      '  }\n' +
+      '}';
+    view.appendChild(prop);
+    view.appendChild(el('p', 'prose dim',
+      'This is an observation, not a submission. It has not been through an ' +
+      'OCP Security Project call, no Security Review Provider has seen it, ' +
+      'and nothing here is endorsed by OCP. It also asks nothing of review ' +
+      'providers: it changes how the reviewed artefact is identified, not ' +
+      'how a review is scoped or carried out \u2014 S.A.F.E. leaves review areas ' +
+      'deliberately open, and this does not touch that.'));
+    view.appendChild(backLink());
+  }
+
   // -------------------------------------------------------------- stats view
   function renderStats(r) {
     var snap = r.snapshot;
@@ -1174,6 +1431,7 @@
     try {
       if (hash === '#/limits') renderLimits(verified);
       else if (hash === '#/stats') renderStats(verified);
+      else if (hash === '#/assessment') renderAssessment(verified);
       else if ((m = hash.match(/^#\/hash\/(.*)$/))) {
         renderHash(verified, decodeURIComponent(m[1]));
       } else if ((m = hash.match(/^#\/pkg\/([^?]*)(?:\?build=([A-Za-z0-9._-]+))?$/))) {
