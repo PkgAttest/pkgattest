@@ -1,0 +1,309 @@
+{
+ "assessment_id": "example-scope1",
+ "disclaimer": "Illustration only. This is not an OCP S.A.F.E. Short-Form Report and no Security Review Provider has reviewed this image. It is a worked example of what an assessment could reference if it named packages instead of a single firmware hash.",
+ "examined": [
+  {
+   "name": "avahi-daemon",
+   "pkg_leaf_hash": "7f3994b454bd5b3539fa685764e289fa333cdfa1b07b16eab02478e58e430a6d",
+   "version": "0.9~rc5-r0"
+  },
+  {
+   "name": "avahi-libnss-mdns",
+   "pkg_leaf_hash": "7357f18dd55aa991668cd958a12e2b4780cd92d19020bcf427e1db9c1ed27059",
+   "version": "0.15.1-r0"
+  },
+  {
+   "name": "bmcweb",
+   "pkg_leaf_hash": "ee148c6a71d5432167c87c660a585dd7dae20f393c876208937e2b6de258aa9f",
+   "version": "1.0+git0+df3d7b2e07-r0"
+  },
+  {
+   "name": "dbus-broker",
+   "pkg_leaf_hash": "990f1ac136ecf84c74cabe4008c9a00ee0d2456ea9de4e9be9af7611bfda9efa",
+   "version": "37-r0"
+  },
+  {
+   "name": "dropbear",
+   "pkg_leaf_hash": "113666841fca8888d26dfb7e1e6e56e285248581ea6d5430913e712f462b09ab",
+   "version": "2026.92-r0"
+  },
+  {
+   "name": "libcrypto3",
+   "pkg_leaf_hash": "3d8d9e60c222fa065a7a1668d78f529d92362761b6d5e7d6f24ccbcee3214de2",
+   "version": "3.5.7-r0"
+  },
+  {
+   "name": "libcurl4",
+   "pkg_leaf_hash": "4f1cfb2f8ef566a27b4cf6cd52e9c72a905d2a4745320176334ec4fbac24cc2f",
+   "version": "8.21.0-r0"
+  },
+  {
+   "name": "libdbus-1-3",
+   "pkg_leaf_hash": "c5cf14a0570af111ee2f794ee3795f902c396b021885ffd2c670ddaa9925980b",
+   "version": "1.16.2-r0"
+  },
+  {
+   "name": "libexpat1",
+   "pkg_leaf_hash": "75e07259196e5b8da6babee591894307567a0263649725f4a13e6cb4e75eb286",
+   "version": "2.8.2-r0"
+  },
+  {
+   "name": "libfastjson4",
+   "pkg_leaf_hash": "8f361c1662552884453c7588d3f4102009acc7fea3f2b2197fa11f636bce16e7",
+   "version": "1.2304.0-r0"
+  },
+  {
+   "name": "libjson-c5",
+   "pkg_leaf_hash": "80862aabd7951bc999e67b71bc77678d6097917c40507aca9045471ee1a4a8aa",
+   "version": "0.19-r0"
+  },
+  {
+   "name": "libjson-glib-1.0-0",
+   "pkg_leaf_hash": "e3accb15f809442a859416600cfe851f469626878ebe0c04f9ec9cf1e8570c5e",
+   "version": "1.10.8-r0"
+  },
+  {
+   "name": "libpam",
+   "pkg_leaf_hash": "b1b6657136637620bb3ed02018be7dfe14b4599cd90ecbd158e2adbacdee4591",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "libpam-runtime",
+   "pkg_leaf_hash": "e12e58515d5b6e1e52f4296c9206fe9020a5cb77429ab27c119649cc67f53ff4",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "libphosphor-dbus1",
+   "pkg_leaf_hash": "fe12f7d6a7cd0c3e4a79a5baf30b208bbb6797b7a3b212aed5a897f4c2c1ec77",
+   "version": "1.0+git0+97bf027789-r1"
+  },
+  {
+   "name": "libsdbusplus1",
+   "pkg_leaf_hash": "21891919b14852991221258afb2a42926c09f8b098b49d39e60a184b1251776e",
+   "version": "git-r1"
+  },
+  {
+   "name": "libssh4",
+   "pkg_leaf_hash": "6557a3275b8073675d6a9bf22380b8742bda773e132ab4e4daef1bfc8ff5abc0",
+   "version": "0.11.4-r0"
+  },
+  {
+   "name": "libssl3",
+   "pkg_leaf_hash": "e48fbe0b90dfc9ae3e76eeb059f0e3c97d41ef905d2a588575f909b2cb21476a",
+   "version": "3.5.7-r0"
+  },
+  {
+   "name": "libtinyxml2-11",
+   "pkg_leaf_hash": "eef54799fbd6dc7442031786a2d71332750d931b58522b88441dbdb754422858",
+   "version": "11.0.0-r0"
+  },
+  {
+   "name": "libyaml-0-2",
+   "pkg_leaf_hash": "d05356cfb493423cf62f281bfd6498b9997afca341cc689bfe636f4d6eac5c4c",
+   "version": "0.2.5-r0"
+  },
+  {
+   "name": "netbase",
+   "pkg_leaf_hash": "8e39824922a8ea396e33d0dd554d5e1ac96b7aa560bf9b36bcc99fd46f5d8d14",
+   "version": "1:6.5-r0"
+  },
+  {
+   "name": "openssh-sftp-server",
+   "pkg_leaf_hash": "14874ee63125ba03d326a8b3439d00922ca695cd2babe5e1d58514a857c9b5f1",
+   "version": "10.4p1-r0"
+  },
+  {
+   "name": "openssl",
+   "pkg_leaf_hash": "36243fad1e0bae9c360da47990a4799f420f2041df2f37d60b296e41437bf3f7",
+   "version": "3.5.7-r0"
+  },
+  {
+   "name": "openssl-bin",
+   "pkg_leaf_hash": "80da04bffc24070cb65bdfa3433a72385075f4ae22a08196ce13e3b47b31f757",
+   "version": "3.5.7-r0"
+  },
+  {
+   "name": "openssl-conf",
+   "pkg_leaf_hash": "b734fb328809f7a310c916518fba5023fbd4f6d79ee640f78e595a31cd18a572",
+   "version": "3.5.7-r0"
+  },
+  {
+   "name": "pam-ipmi",
+   "pkg_leaf_hash": "2e7650386bc506a1d9db2f4cd272af4f23d71d0bff8714f84da68e05c31bd43a",
+   "version": "1.0+git0+ee3d6e8109-r1"
+  },
+  {
+   "name": "pam-plugin-access",
+   "pkg_leaf_hash": "3b3f45c6975b37b7e9ad10fedad5c836752ce73818db4796f46d784dd1e6108d",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-deny",
+   "pkg_leaf_hash": "97e1fcf7e280407e39342db71487977beea4d229a00746f2bfb07312c63c7010",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-env",
+   "pkg_leaf_hash": "9ac0f9baf167f218ce183d5a5b0096f1eeb3748f51b834bdb0e750a6a07204ad",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-faildelay",
+   "pkg_leaf_hash": "b9303b10a74d4ee4f69534565923aa6d9c625772c0f3b4290ff79c8c09c48aa3",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-faillock",
+   "pkg_leaf_hash": "4d8a2d6f6bd154b80935221e3e3ee09f333a1a88130d0c62b12f446f33d5bf40",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-group",
+   "pkg_leaf_hash": "34bc69a2c7942b6f962712b68bcef0615630a7dcf36a5b722911f44f915a735b",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-keyinit",
+   "pkg_leaf_hash": "4bdf213d086a8666d46d240aab2b1bd2e49e91c29818550588b863a9883c15f5",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-limits",
+   "pkg_leaf_hash": "e86a457bf03e62bb032be496113a075bb5526c39be90827c1e3e0ac305b8a058",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-localuser",
+   "pkg_leaf_hash": "fd53bd2f4f19343a0630e97788f1fdc8c7c6435f7de5debd6ecbe3cf7048dbb8",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-loginuid",
+   "pkg_leaf_hash": "dd6c4314c6a2521b19db2e87092c09e894b7dedbbac66a6c8a9c7cd7b8f364b7",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-mail",
+   "pkg_leaf_hash": "6c9e038bcec54524b367d45ba1b784066449b9cd778f01add37db0e81e940fb6",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-motd",
+   "pkg_leaf_hash": "d8fda4ee1302d76a9207adb1d8ee8356997dbee754d10bd7d172f187216c5a20",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-namespace",
+   "pkg_leaf_hash": "bb85956887d4c9fa7cc3124c431cafe09d35cfbf37fba1d3e854ae9f03883f86",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-nologin",
+   "pkg_leaf_hash": "4e7c6ec33ef8afc35d40a835459af9e3891cfe6d81ab8b38062295e012e9ae49",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-permit",
+   "pkg_leaf_hash": "f1fb94599bb94c6742d5bb81c6873e3f594a87f2b5686429da3287f9e7913ab0",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-pwhistory",
+   "pkg_leaf_hash": "d9eb82bf8e0f2b5372489b68555c5cc6f126a1d4945706db2ab70669b2f34201",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-rootok",
+   "pkg_leaf_hash": "aa24a1d99694095e760f30b141d23f3b5068ca18e410389356ff1a56ffdbca76",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-securetty",
+   "pkg_leaf_hash": "bf55f8892a0d70b832a16b5185a0916a602f2f62a79608c1b246704a57634fc3",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-shells",
+   "pkg_leaf_hash": "12f562b2b2b7f7dc95c1f1d3b8c3672a59f9f04624d4be03608cf8b3076c9c69",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-succeed-if",
+   "pkg_leaf_hash": "d0c497363b5aadd6f929313080df07b65073d2fd565d921dc96d4bca5e5a6f3c",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-unix",
+   "pkg_leaf_hash": "ee135e5b86f04f933e0812c78f4d7c13a573925b3daa96edc9b1b7091c865582",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "pam-plugin-warn",
+   "pkg_leaf_hash": "c6d664b50dd9fd4164cedbc0ea53c871bb09cb68f545b5405b8a6b55f37f4d72",
+   "version": "1.7.2-r0"
+  },
+  {
+   "name": "phosphor-ipmi-config",
+   "pkg_leaf_hash": "004a699f31d0a5ec11b672e13048376a7067f958018440949233db8a44c83d6e",
+   "version": "1.0-r1"
+  },
+  {
+   "name": "phosphor-ipmi-fru",
+   "pkg_leaf_hash": "583de7ac4c2bceeeadf8fc5713a79c0db23045a2159f29fd536a6df2af474711",
+   "version": "1.0+git0+11dd4dc37a-r1"
+  },
+  {
+   "name": "phosphor-ipmi-host",
+   "pkg_leaf_hash": "9bd46f0d3e1287ab97fef0b2e98aafe5e39e9d4782df5add9e6e20c5bcd056ff",
+   "version": "1.0+git0+f42adfa89c-r1"
+  },
+  {
+   "name": "phosphor-ipmi-net",
+   "pkg_leaf_hash": "37c74bbef1b65c25b4a5e8d9d5129afe50261863c0f3d1e66c9714f2994a3f10",
+   "version": "1.0+git0+0a4161a544-r1"
+  },
+  {
+   "name": "phosphor-network",
+   "pkg_leaf_hash": "f9d04875bb3745dbe880a14b34761e5a12b7d19acb4cc4d48da49c432c5ecf5b",
+   "version": "1.0+git0+c8eb5b6bf3-r1"
+  },
+  {
+   "name": "shadow",
+   "pkg_leaf_hash": "38f5e3febefa9ea48c1236c8e8b832eda8dbc3b5c45a37e24eacecbc83b96e8a",
+   "version": "4.19.4-r0"
+  },
+  {
+   "name": "shadow-base",
+   "pkg_leaf_hash": "78e8ad65e276367cb0ad55d63b02c072bb2cd4298c7e71f8da3f3e271016b471",
+   "version": "4.19.4-r0"
+  },
+  {
+   "name": "shadow-securetty",
+   "pkg_leaf_hash": "87cd0ffc892e3cf3572c85effaf3239cc806b1e99f17eb4a80d195e41de93b6f",
+   "version": "4.6-r0"
+  },
+  {
+   "name": "systemd-networkd",
+   "pkg_leaf_hash": "d3dbe4cdeedd5853d99d8d525df3d55d3eb762bee09168695542e96a549ac301",
+   "version": "1:259.5-r0"
+  }
+ ],
+ "illustrative": true,
+ "issued_at": "2026-08-22",
+ "issuer": {
+  "kind": "self-issued-example",
+  "name": "pkgattest (worked example)"
+ },
+ "review": {
+  "aligns_with_safe_scope": 1,
+  "basis": "The externally reachable attack surface: services that listen, terminate TLS, authenticate, or parse untrusted input on the way in.",
+  "methodology": "none - illustrative selection, not a review"
+ },
+ "schema": "pkgattest-assessment-v1",
+ "subject": {
+  "device_root": "c923f7235a1f641c8744875a807181805a925ca5d394c5bc1543f0d0f3ed8d72",
+  "image_line": "rpi3-openbmc",
+  "manifest_type": "pkg-measurements-v1",
+  "package_count": 2131
+ }
+}

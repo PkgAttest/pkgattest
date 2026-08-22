@@ -622,3 +622,131 @@ def test_browser_path_rejects_a_tampered_bundle(tmp_path):
         capture_output=True, text=True, timeout=300)
     assert proc.returncode == 1
     assert "BUNDLE INVALID" in proc.stdout
+
+
+# --------------------------------------------------------------- assessments
+def _assessment(doc, examined_names, **over):
+    """A minimal, valid assessment document over a fixture measurement doc."""
+    by_name = {p["name"]: p for p in doc["packages"]}
+    a = {
+        "schema": "pkgattest-assessment-v1",
+        "illustrative": True,
+        "disclaimer": "Illustration only. Not an OCP S.A.F.E. report.",
+        "assessment_id": "t1",
+        "issuer": {"name": "test (worked example)",
+                   "kind": "self-issued-example"},
+        "issued_at": "2026-08-22",
+        "subject": {"image_line": doc["image_line"],
+                    "manifest_type": doc["schema"],
+                    "device_root": doc["merkle_root"],
+                    "package_count": len(doc["packages"])},
+        "review": {"basis": "test", "aligns_with_safe_scope": 1,
+                   "methodology": "none"},
+        "examined": [{"name": n, "version": by_name[n]["version"],
+                      "pkg_leaf_hash": by_name[n]["leaf_hash"]}
+                     for n in examined_names],
+    }
+    a.update(over)
+    return a
+
+
+def _write_assessment(base, a):
+    d = base / "assessments"
+    d.mkdir(exist_ok=True)
+    (d / "a.json").write_text(json.dumps(a))
+
+
+def test_assessment_is_exported_and_checked(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    _write_assessment(base, _assessment(doc, ["dropbear", "bash"]))
+    out = tmp_path / "dist"
+    manifest = _export(base, out)
+
+    (a,) = manifest["assessments"]
+    assert a["examined"] == 2
+    assert a["illustrative"] is True
+    assert a["subject"] == "A"
+
+    shipped = _load_data(str(out), "assessments")
+    assert shipped[0]["disclaimer"]
+    assert {e["name"] for e in shipped[0]["examined"]} == {"dropbear", "bash"}
+
+
+def test_assessment_must_name_a_real_image(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    a = _assessment(doc, ["dropbear"])
+    a["subject"]["device_root"] = "ff" * 32
+    _write_assessment(base, a)
+    with pytest.raises(site_export.ExportError, match="not any build"):
+        _export(base, tmp_path / "dist")
+
+
+def test_assessment_cannot_name_a_package_that_is_not_there(tmp_path):
+    """An assessment claiming to have examined something absent from the
+    image would put an unearned claim on the page."""
+    base, doc = _fixture_tree(tmp_path)
+    a = _assessment(doc, ["dropbear"])
+    a["examined"][0]["pkg_leaf_hash"] = "aa" * 32
+    _write_assessment(base, a)
+    with pytest.raises(site_export.ExportError, match="not in the subject"):
+        _export(base, tmp_path / "dist")
+
+
+def test_assessment_name_and_measurement_must_agree(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    a = _assessment(doc, ["dropbear"])
+    a["examined"][0]["version"] = "9.9-r9"
+    _write_assessment(base, a)
+    with pytest.raises(site_export.ExportError, match="but that measurement"):
+        _export(base, tmp_path / "dist")
+
+
+def test_illustrative_assessment_cannot_lose_its_disclaimer(tmp_path):
+    """The label is enforced, not merely expected. A worked example must not
+    be able to shed the words that say it is one."""
+    base, doc = _fixture_tree(tmp_path)
+    a = _assessment(doc, ["dropbear"], disclaimer="")
+    _write_assessment(base, a)
+    with pytest.raises(site_export.ExportError, match="must carry a disclaimer"):
+        _export(base, tmp_path / "dist")
+
+
+def test_assessment_must_declare_whether_it_is_illustrative(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    a = _assessment(doc, ["dropbear"])
+    del a["illustrative"]
+    _write_assessment(base, a)
+    with pytest.raises(site_export.ExportError, match="illustrative"):
+        _export(base, tmp_path / "dist")
+
+
+def test_assessment_package_count_must_match(tmp_path):
+    base, doc = _fixture_tree(tmp_path)
+    a = _assessment(doc, ["dropbear"])
+    a["subject"]["package_count"] = 999
+    _write_assessment(base, a)
+    with pytest.raises(site_export.ExportError, match="claims 999 packages"):
+        _export(base, tmp_path / "dist")
+
+
+def test_real_example_assessment_is_generated_reproducibly(tmp_path):
+    """The committed example must be exactly what the generator produces --
+    otherwise the selection could drift from the leaf hashes it names."""
+    src = os.path.join(BASE, "assessments", "example-scope1.json")
+    if not os.path.exists(src) or not os.path.exists(REAL_LOG):
+        pytest.skip("the example assessment or the real data is not present")
+    sys.path.insert(0, os.path.join(BASE, "tools"))
+    import make_example_assessment as gen
+
+    out = tmp_path / "regenerated.json"
+    assert gen.main(["--out", str(out)]) == 0
+    assert out.read_text() == open(src, encoding="utf-8").read()
+
+    a = json.loads(out.read_text())
+    assert a["illustrative"] is True
+    assert "not an OCP S.A.F.E." in a["disclaimer"]
+    # The demo hinges on dropbear being inside the reviewed area and
+    # os-release being outside it.
+    names = {e["name"] for e in a["examined"]}
+    assert "dropbear" in names
+    assert "os-release" not in names

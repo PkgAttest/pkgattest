@@ -139,7 +139,7 @@ if (breakName) {
 
 load('verify.js');
 for (const f of ['data/snapshot.js', 'data/sth-history.js',
-                 'data/builds-index.js']) load(f);
+                 'data/builds-index.js', 'data/assessments.js']) load(f);
 load('app.js');
 
 // Drain the scripts app.js asked for, firing onload as a browser would.

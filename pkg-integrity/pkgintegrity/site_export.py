@@ -220,6 +220,83 @@ def collect_builds(artifacts_dir):
     return builds
 
 
+def collect_assessments(assess_dir, builds):
+    """Load assessment-scope documents and check every claim they make.
+
+    An assessment says "these packages were examined, in the image with this
+    device root". Both halves are checkable against data already in the
+    bundle, so both are checked: an assessment cannot name an image that does
+    not exist here, and it cannot name a package that is not in that image.
+    Copying it through unverified would put an unearned claim on the page
+    beside numbers that were recomputed.
+
+    The illustrative labelling is enforced, not merely present. A worked
+    example must not be able to lose the words that say it is one.
+    """
+    out = []
+    if not os.path.isdir(assess_dir):
+        return out
+
+    by_root = {}
+    for b in builds:
+        by_root.setdefault(b["device_root"], b)
+
+    for name in sorted(os.listdir(assess_dir)):
+        if not name.endswith(".json"):
+            continue
+        with open(os.path.join(assess_dir, name), encoding="utf-8") as f:
+            a = json.load(f)
+
+        if a.get("schema") != "pkgattest-assessment-v1":
+            raise ExportError("%s: not a pkgattest-assessment-v1 document"
+                              % name)
+        if not isinstance(a.get("illustrative"), bool):
+            raise ExportError("%s: must state illustrative true or false"
+                              % name)
+        if a.get("illustrative") and not str(a.get("disclaimer", "")).strip():
+            raise ExportError(
+                "%s: an illustrative assessment must carry a disclaimer the "
+                "page can print" % name)
+
+        subject = a.get("subject") or {}
+        root = subject.get("device_root")
+        build = by_root.get(root)
+        if build is None:
+            raise ExportError(
+                "%s: names device root %s, which is not any build in this "
+                "snapshot" % (name, root))
+        if subject.get("package_count") != build["package_count"]:
+            raise ExportError(
+                "%s: claims %s packages, the image has %d"
+                % (name, subject.get("package_count"), build["package_count"]))
+
+        # Every examined package must really be in that image, with that
+        # version and that measurement.
+        doc = build["_doc"]
+        by_leaf = {p["leaf_hash"]: p for p in doc["packages"]}
+        seen = set()
+        for e in a.get("examined", []):
+            leaf = e.get("pkg_leaf_hash")
+            pkg = by_leaf.get(leaf)
+            if pkg is None:
+                raise ExportError(
+                    "%s: examined package %r has measurement %s, which is not "
+                    "in the subject image" % (name, e.get("name"), leaf))
+            if pkg["name"] != e.get("name") or pkg["version"] != e.get("version"):
+                raise ExportError(
+                    "%s: examined entry says %s %s but that measurement is "
+                    "%s %s" % (name, e.get("name"), e.get("version"),
+                               pkg["name"], pkg["version"]))
+            if leaf in seen:
+                raise ExportError("%s: duplicate examined package %s"
+                                  % (name, e.get("name")))
+            seen.add(leaf)
+
+        a["_subject_label"] = build["label"]
+        out.append(a)
+    return out
+
+
 def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
     """Build the bundle. Returns a manifest describing what was written."""
     store_dir = store_dir or os.path.join(base, "log")
@@ -386,6 +463,13 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
              if k in h}
             for h in history])
 
+    assessments = collect_assessments(
+        os.path.join(base, "assessments"), builds)
+    written["data/assessments.js"] = _js(
+        os.path.join(data_dir, "assessments.js"), "assessments",
+        [{k: a[k] for k in a if not k.startswith("_")} |
+         {"subject_label": a["_subject_label"]} for a in assessments])
+
     written["data/builds-index.js"] = _js(
         os.path.join(data_dir, "builds-index.js"), "builds", [
             {k: b[k] for k in
@@ -496,6 +580,11 @@ def export(base, out_dir, store_dir=None, artifacts_dir=None, pub_path=None):
                                       "package_count", "unpublished_count",
                                       "device_root")}
                    for b in builds],
+        "assessments": [{"id": a["assessment_id"],
+                         "subject": a["_subject_label"],
+                         "examined": len(a.get("examined", [])),
+                         "illustrative": a["illustrative"]}
+                        for a in assessments],
         "files": len(sums) + 1,
         "bytes": sum(os.path.getsize(os.path.join(out_dir, rel))
                      for rel, _ in sums),

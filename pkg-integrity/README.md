@@ -18,7 +18,8 @@ published. Demo plan: `../demo.md` (Demo A). Formats and trust model:
 | `pyproject.toml` | installable `pkgattest` package (`make venv` does `pip install -e .`) |
 | `site/` | the static site: `index.html`, `app.js`, `style.css`, `verify.js` (browser-side verification core) and `vendor/pkgcrypto.js` (pinned, vendored sha256/sha512/ed25519) |
 | `site-dist/` (gitignored) | generated bundle — `make site` |
-| `tools/` | `vendor_crypto.py` (build the vendored crypto), `parity.js` (JS vs Python), `verify-bundle.js` (check a bundle the way a browser does), `render-check.js` (run the page against a minimal DOM) |
+| `tools/` | `vendor_crypto.py` (build the vendored crypto), `parity.js` (JS vs Python), `verify-bundle.js` (check a bundle the way a browser does), `render-check.js` (run the page against a minimal DOM), `make_example_assessment.py` |
+| `assessments/` | assessment-scope documents — currently one **worked example**, not a real audit |
 | `build-image.sh {A\|B\|C}` | build the demo images (B: dropbear 2026.91, never published; C: a later build giving the log a second tree head) |
 | `demo/` | per-beat frame scripts, env |
 | `sim/` | hardware-free path: synthetic evidence bundles, laptop swtpm, e2e |
@@ -167,6 +168,37 @@ drift unnoticed.
 Every generated `.js` file is pure ASCII on purpose: loaded over `file://`
 there is no charset header, and a mis-guessed byte in a path would silently
 change a leaf hash.
+
+## Security assessment scope
+
+An [OCP S.A.F.E.](https://www.opencompute.org/projects/ocp-safe-program)
+Short-Form Report identifies the reviewed artefact with a single field —
+`device.fw_hash_sha2_384`. For a monolithic root-of-trust image that
+describes one artefact fairly. For a Linux BMC image of 2,131 packages it
+answers only *are these bytes identical*, and the answer is no the moment
+anything is rebuilt, including changes nobody reviewed.
+
+`#/assessment` demonstrates the alternative: an assessment that names the
+package measurements it covered, joined on the leaf hash rather than on
+name and version. Against the three builds in this snapshot:
+
+| build | | |
+|---|---|---|
+| A | the image the assessment names | 57 examined |
+| B | dropbear swapped to 2026.91 | 56 examined, **1 inside the reviewed area but not the reviewed build** |
+| C | build identifier changed | 57 examined |
+
+A firmware hash fails identically for B and C. Naming packages separates the
+change a review cares about from the one it does not — which is the same
+argument the log makes about publication, one layer up.
+
+**`assessments/example-scope1.json` is a worked example and nothing more.**
+No Security Review Provider has reviewed this image; no real SRP or vendor is
+named anywhere; the document is unsigned, carries its own schema name, and the
+exporter refuses to ship it if it loses its `illustrative` flag or its
+disclaimer. The one-field SFR sketch on that page is an observation, not a
+submission — it has not been through an OCP Security Project call and nothing
+here is endorsed by OCP.
 
 ## Recording plan (per demo.md production rules)
 

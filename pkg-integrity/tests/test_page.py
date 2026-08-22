@@ -416,3 +416,64 @@ def test_tree_is_svg_not_markup(bundle):
     out = render(bundle, "--hash", "#/pkg/dropbear", "--show-hidden")
     assert "root  f1f87542" in out
     assert "this record" in out
+
+
+# ------------------------------------------------------- the assessment view
+@needs
+def test_assessment_page_is_unmistakably_an_example(bundle):
+    """This is the one page where a fabricated artefact would do real damage:
+    it discusses audits, so it must never look like one."""
+    out = render(bundle, "--hash", "#/assessment")
+    assert "Worked example" in out
+    assert "not an OCP S.A.F.E. Short-Form Report" in out
+    assert "no Security Review Provider has reviewed this image" in out
+    assert "pkgattest (worked example)" in out
+
+    # It must not name a real review provider as having assessed anything.
+    for srp in ("Keysight", "Riscure", "NCC", "Atredis", "IOActive"):
+        assert srp not in out, "named a real SRP: %s" % srp
+
+    # Nor imply endorsement or submission.
+    assert "not a submission" in out
+    assert "nothing here is endorsed by OCP" in out
+
+
+@needs
+def test_assessment_page_states_the_gap(bundle):
+    out = render(bundle, "--hash", "#/assessment")
+    assert "fw_hash_sha2_384" in out
+    assert "Security Review Provider" in out
+    # The vocabulary table, with the two blanks that are the point.
+    assert "Reference Value Provider" in out
+    assert "Cloud Service Provider" in out
+    assert "(no term)" in out
+
+
+@needs
+def test_assessment_distinguishes_a_meaningful_change_from_a_cosmetic_one(
+        bundle):
+    """The whole argument: a firmware hash fails identically for image B
+    (a reviewed package swapped) and image C (a build identifier changed).
+    Naming packages tells them apart."""
+    out = render(bundle, "--hash", "#/assessment")
+
+    assert "This is the image the assessment names." in out       # A
+    assert "dropbear 2026.91-r0" in out                            # B
+    assert "reviewed build was 2026.92-r0" in out
+    assert "inside the reviewed area but not the reviewed build" in out
+    assert "57 examined" in out and "56 examined" in out
+    assert "including the one whose only change was a build identifier" in out
+
+
+@needs
+@pytest.mark.parametrize("route,expect", [
+    ("#/pkg/dropbear", "This exact measurement is named as examined"),
+    ("#/pkg/dropbear?build=B", "Inside the reviewed area, but not the reviewed build."),
+    ("#/pkg/os-release", "Not in the scope named by"),
+])
+def test_package_page_states_where_it_sits_in_the_assessment(
+        bundle, route, expect):
+    out = render(bundle, "--hash", route)
+    assert expect in out
+    # The disclaimer travels with the claim, wherever it is shown.
+    assert "not an OCP S.A.F.E. Short-Form Report" in out
